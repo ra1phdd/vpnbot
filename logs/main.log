@@ -1,0 +1,33 @@
+{"level":"debug","ts":"2024-09-03 00:00:17","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:01:14","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:01:42","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:02:40","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:05:07","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:05:51","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:06:34","msg":"Бот запущен"}
+{"level":"fatal","ts":"2024-09-03 00:14:14","msg":"Ошибка при создании бота","error":"telegram: Unauthorized (401)","prefError":"json: unsupported type: func(error, telebot.Context)","stacktrace":"nsvpn/pkg/logger.Fatal\n\t/home/ra1ph/GolandProjects/vpnbot/pkg/logger/logger.go:118\nnsvpn/internal/pkg/app.InitBot\n\t/home/ra1ph/GolandProjects/vpnbot/internal/pkg/app/app.go:60\nnsvpn/internal/pkg/app.New\n\t/home/ra1ph/GolandProjects/vpnbot/internal/pkg/app/app.go:47\nmain.main\n\t/home/ra1ph/GolandProjects/vpnbot/cmd/main/main.go:9\nruntime.main\n\t/usr/lib/go/src/runtime/proc.go:272"}
+{"level":"debug","ts":"2024-09-03 00:14:37","msg":"Бот запущен"}
+{"level":"fatal","ts":"2024-09-03 00:14:42","msg":"Ошибка при создании бота","error":"telegram: Unauthorized (401)","prefError":"json: unsupported type: func(error, telebot.Context)","stacktrace":"nsvpn/pkg/logger.Fatal\n\t/home/ra1ph/GolandProjects/vpnbot/pkg/logger/logger.go:118\nnsvpn/internal/pkg/app.InitBot\n\t/home/ra1ph/GolandProjects/vpnbot/internal/pkg/app/app.go:60\nnsvpn/internal/pkg/app.New\n\t/home/ra1ph/GolandProjects/vpnbot/internal/pkg/app/app.go:47\nmain.main\n\t/home/ra1ph/GolandProjects/vpnbot/cmd/main/main.go:9\nruntime.main\n\t/usr/lib/go/src/runtime/proc.go:272"}
+{"level":"debug","ts":"2024-09-03 00:20:02","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:31:33","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:37:33","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:39:01","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:45:06","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:45:29","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:47:56","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 00:48:10","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:03:57","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:08:03","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:09:00","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:09:28","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:11:14","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:12:41","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:14:37","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:16:01","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-03 11:16:27","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-04 23:44:48","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-04 23:49:07","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-04 23:49:47","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-04 23:50:33","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-04 23:57:21","msg":"Бот запущен"}
+{"level":"debug","ts":"2024-09-05 00:10:55","msg":"Бот запущен"}
