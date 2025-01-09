@@ -83,6 +83,7 @@ func CreateInvoice(currency string, uuid string) telebot.Invoice {
 	var amount int
 	switch currency {
 	case "XTR":
+		amount = 100
 	default:
 		amount = 1
 	}
