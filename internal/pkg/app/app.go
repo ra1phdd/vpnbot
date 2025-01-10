@@ -8,10 +8,12 @@ import (
 	"nsvpn/config"
 	"nsvpn/internal/app/handlers/base"
 	"nsvpn/internal/app/handlers/payments"
+	"nsvpn/internal/app/handlers/promocodes"
 	"nsvpn/internal/app/handlers/servers"
 	"nsvpn/internal/app/middleware"
 	baseService "nsvpn/internal/app/services/base"
 	paymentsService "nsvpn/internal/app/services/payments"
+	promocodesService "nsvpn/internal/app/services/promocodes"
 	serversService "nsvpn/internal/app/services/servers"
 	subscriptionsService "nsvpn/internal/app/services/subscriptions"
 	usersService "nsvpn/internal/app/services/users"
@@ -27,6 +29,7 @@ type App struct {
 	payments      *paymentsService.Service
 	subscriptions *subscriptionsService.Service
 	servers       *serversService.Service
+	promocodes    *promocodesService.Service
 }
 
 func New() (*App, error) {
@@ -71,6 +74,7 @@ func InitBot(TelegramAPI string, a *App) {
 	a.payments = paymentsService.New()
 	a.subscriptions = subscriptionsService.New()
 	a.servers = serversService.New()
+	a.promocodes = promocodesService.New()
 
 	// Middleware
 	mw := middleware.Endpoint{Bot: b, User: a.users}
@@ -81,13 +85,18 @@ func InitBot(TelegramAPI string, a *App) {
 	//usersEndpoint := users.Endpoint{User: a.users}
 	paymentsEndpoint := payments.Endpoint{Bot: b, Payments: a.payments, Subscriptions: a.subscriptions}
 	serversEndpoint := servers.Endpoint{Server: a.servers}
+	promocodesEndpoint := promocodes.Endpoint{Promocodes: a.promocodes}
 
 	// Обработчики
 	b.Handle("/help", baseEndpoint.HelpHandler)
 	b.Handle("/pay", paymentsEndpoint.PaymentHandler)              // Получение инвойса на оплату
 	b.Handle(tele.OnCheckout, paymentsEndpoint.PreCheckoutHandler) // Подтверждение оплаты
+
+	// тестовые обработчики, в дальнейшем переделать
 	b.Handle("/addserv", serversEndpoint.AddServerHandler)
 	b.Handle("/addcl", serversEndpoint.AddClientHandler)
+	b.Handle("/getserv", serversEndpoint.GetServerHandler)
+	b.Handle("/getpromo", promocodesEndpoint.GetPromocodesHandler)
 
 	logger.Debug("Бот запущен")
 	b.Start()

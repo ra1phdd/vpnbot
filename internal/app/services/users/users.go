@@ -11,13 +11,13 @@ import (
 	"nsvpn/pkg/db"
 )
 
-type Service struct{}
+type Users struct{}
 
-func New() *Service {
-	return &Service{}
+func New() *Users {
+	return &Users{}
 }
 
-func (s Service) GetById(id int64) (models.User, error) {
+func (u *Users) GetById(id int64) (models.User, error) {
 	var data models.User
 
 	cacheKey := fmt.Sprintf("user:%d", id)
@@ -38,7 +38,7 @@ func (s Service) GetById(id int64) (models.User, error) {
 	defer rows.Close()
 
 	if rows.Next() {
-		err = rows.Scan(&data.ID, &data.Username, &data.Firstname, &data.Lastname)
+		err = rows.Scan(&data.ID, &data.Username, &data.Firstname, &data.Lastname, &data.PartnerID)
 		if err != nil {
 			return models.User{}, err
 		}
@@ -59,18 +59,8 @@ func (s Service) GetById(id int64) (models.User, error) {
 	return data, nil
 }
 
-func (s Service) Delete(id int64) error {
-	rows, err := db.Conn.Queryx(`DELETE FROM users WHERE id = $1`, id)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	return nil
-}
-
-func (s Service) Update(user models.User) error {
-	userOld, err := s.GetById(user.ID)
+func (u *Users) Update(user models.User) error {
+	userOld, err := u.GetById(user.ID)
 	if err != nil {
 		return err
 	}
@@ -109,8 +99,8 @@ func (s Service) Update(user models.User) error {
 	return nil
 }
 
-func (s Service) Add(user models.User) error {
-	rows, err := db.Conn.Queryx(`INSERT INTO users (id, username, firstname, lastname) VALUES ($1, $2, $3, $4)`, user.ID, user.Username, user.Firstname, user.Lastname)
+func (u *Users) Add(user models.User) error {
+	rows, err := db.Conn.Queryx(`INSERT INTO users (id, username, firstname, lastname, partner_id) VALUES ($1, $2, $3, $4, $5)`, user.ID, user.Username, user.Firstname, user.Lastname, user.PartnerID)
 	if err != nil {
 		return err
 	}

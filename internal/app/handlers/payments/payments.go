@@ -62,7 +62,7 @@ func (e *Endpoint) PreCheckoutHandler(c telebot.Context) error {
 		UserID:         c.Sender().ID,
 		Amount:         c.PreCheckoutQuery().Total,
 		Currency:       c.PreCheckoutQuery().Currency,
-		SubscriptionID: int64(subId),
+		SubscriptionID: subId,
 		Uuid:           c.PreCheckoutQuery().Payload,
 	}
 

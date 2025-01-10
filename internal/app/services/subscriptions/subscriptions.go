@@ -12,26 +12,25 @@ import (
 	"time"
 )
 
-type Service struct{}
+type Subscriptions struct{}
 
-func New() *Service {
-	return &Service{}
+func New() *Subscriptions {
+	return &Subscriptions{}
 }
 
-func (s Service) IsActive(userId int64) (bool, error) {
+func (s *Subscriptions) IsActive(userId int64) (bool, error) {
 	data, err := s.GetByUserId(userId)
 	if err != nil {
 		return false, err
 	}
 
-	currentTime := time.Now().UTC()
-	if currentTime.Before(data.EndDate) {
+	if data.EndDate.Before(time.Now().UTC()) {
 		return true, nil
 	}
 	return false, nil
 }
 
-func (s Service) GetByUserId(userId int64) (models.Subscription, error) {
+func (s *Subscriptions) GetByUserId(userId int64) (models.Subscription, error) {
 	var data models.Subscription
 
 	cacheKey := fmt.Sprintf("subscription:%d", userId)
@@ -73,7 +72,7 @@ func (s Service) GetByUserId(userId int64) (models.Subscription, error) {
 	return data, nil
 }
 
-func (s Service) Add(data models.Subscription) (int, error) {
+func (s *Subscriptions) Add(data models.Subscription) (int, error) {
 	var id int
 	err := db.Conn.QueryRowx(`INSERT INTO subscriptions (user_id, end_date) VALUES ($1, $2) RETURNING id`, data.UserID, data.EndDate).Scan(&id)
 	if err != nil {
@@ -81,4 +80,23 @@ func (s Service) Add(data models.Subscription) (int, error) {
 	}
 
 	return id, nil
+}
+
+func (s *Subscriptions) UpdateEndDate(userId int, endDate time.Time) error {
+	tx, err := db.Conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE subscriptions SET end_date = $1 WHERE user_id = $2`, endDate, userId)
+	if err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
 }
