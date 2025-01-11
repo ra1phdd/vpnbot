@@ -1,4 +1,4 @@
-package promocodes
+package handlers
 
 import (
 	"fmt"

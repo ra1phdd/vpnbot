@@ -1,6 +1,7 @@
-package users
+package repository
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 
 type Users struct{}
 
-func New() *Users {
+func NewUsers() *Users {
 	return &Users{}
 }
 
@@ -31,20 +32,12 @@ func (u *Users) GetById(id int64) (models.User, error) {
 		}
 	}
 
-	rows, err := db.Conn.Query(`SELECT * FROM users WHERE id = $1`, id)
+	err = db.Conn.QueryRowx(`SELECT * FROM users WHERE id = $1`, id).StructScan(&data)
 	if err != nil {
-		return models.User{}, err
-	}
-	defer rows.Close()
-
-	if rows.Next() {
-		err = rows.Scan(&data.ID, &data.Username, &data.Firstname, &data.Lastname, &data.PartnerID)
-		if err != nil {
-			return models.User{}, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.User{}, constants.ErrUserNotFound
 		}
-	}
-	if data.ID == 0 {
-		return models.User{}, constants.ErrUserNotFound
+		return models.User{}, err
 	}
 
 	jsonData, err := json.Marshal(data)
@@ -92,19 +85,10 @@ func (u *Users) Update(user models.User) error {
 		}
 	}
 
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-
-	return nil
+	return tx.Commit()
 }
 
 func (u *Users) Add(user models.User) error {
-	rows, err := db.Conn.Queryx(`INSERT INTO users (id, username, firstname, lastname, partner_id) VALUES ($1, $2, $3, $4, $5)`, user.ID, user.Username, user.Firstname, user.Lastname, user.PartnerID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	return nil
+	_, err := db.Conn.Exec(`INSERT INTO users (id, username, firstname, lastname, partner_id) VALUES ($1, $2, $3, $4, $5)`, user.ID, user.Username, user.Firstname, user.Lastname, user.PartnerID)
+	return err
 }

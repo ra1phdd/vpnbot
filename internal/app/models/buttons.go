@@ -5,9 +5,11 @@ type ButtonOption struct {
 	Display string
 }
 
-var AcceptOfferButton = ButtonOption{
-	Value:   "Принять",
-	Display: "accept",
+var AcceptOfferButton = []ButtonOption{
+	{
+		Value:   "accept_offer",
+		Display: "Принять условия",
+	},
 }
 
 var ClientButtons = []ButtonOption{

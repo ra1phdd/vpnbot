@@ -1,6 +1,7 @@
-package subscriptions
+package repository
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,20 +15,8 @@ import (
 
 type Subscriptions struct{}
 
-func New() *Subscriptions {
+func NewSubscriptions() *Subscriptions {
 	return &Subscriptions{}
-}
-
-func (s *Subscriptions) IsActive(userId int64) (bool, error) {
-	data, err := s.GetByUserId(userId)
-	if err != nil {
-		return false, err
-	}
-
-	if data.EndDate.Before(time.Now().UTC()) {
-		return true, nil
-	}
-	return false, nil
 }
 
 func (s *Subscriptions) GetByUserId(userId int64) (models.Subscription, error) {
@@ -44,20 +33,12 @@ func (s *Subscriptions) GetByUserId(userId int64) (models.Subscription, error) {
 		}
 	}
 
-	rows, err := db.Conn.Query(`SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, userId)
+	err = db.Conn.QueryRowx(`SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, userId).StructScan(&data)
 	if err != nil {
-		return models.Subscription{}, err
-	}
-	defer rows.Close()
-
-	if rows.Next() {
-		err = rows.Scan(&data.ID, &data.UserID, &data.StartDate, &data.EndDate)
-		if err != nil {
-			return models.Subscription{}, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.Subscription{}, constants.ErrServerNotFound
 		}
-	}
-	if data.ID == 0 {
-		return models.Subscription{}, constants.ErrSubNotFound
+		return models.Subscription{}, err
 	}
 
 	jsonData, err := json.Marshal(data)
@@ -75,28 +56,10 @@ func (s *Subscriptions) GetByUserId(userId int64) (models.Subscription, error) {
 func (s *Subscriptions) Add(data models.Subscription) (int, error) {
 	var id int
 	err := db.Conn.QueryRowx(`INSERT INTO subscriptions (user_id, end_date) VALUES ($1, $2) RETURNING id`, data.UserID, data.EndDate).Scan(&id)
-	if err != nil {
-		return 0, err
-	}
-
-	return id, nil
+	return id, err
 }
 
 func (s *Subscriptions) UpdateEndDate(userId int, endDate time.Time) error {
-	tx, err := db.Conn.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	_, err = tx.Exec(`UPDATE subscriptions SET end_date = $1 WHERE user_id = $2`, endDate, userId)
-	if err != nil {
-		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-
-	return nil
+	_, err := db.Conn.Exec(`UPDATE subscriptions SET end_date = $1 WHERE user_id = $2`, endDate, userId)
+	return err
 }

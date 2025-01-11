@@ -1,4 +1,4 @@
-package users
+package handlers
 
 import (
 	"nsvpn/internal/app/models"

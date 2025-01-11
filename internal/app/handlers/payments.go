@@ -1,29 +1,28 @@
-package payments
+package handlers
 
 import (
 	"fmt"
 	"github.com/google/uuid"
 	"gopkg.in/telebot.v3"
 	"nsvpn/internal/app/models"
+	"nsvpn/internal/app/services"
 	"time"
 )
 
-type Payments interface {
-	Add(data models.Payment) (int, error)
-}
-type Subscriptions interface {
-	Add(data models.Subscription) (int, error)
-	IsActive(userId int64) (bool, error)
+type Payments struct {
+	ps *services.Payments
+	ss *services.Subscriptions
 }
 
-type Endpoint struct {
-	Bot           *telebot.Bot
-	Payments      Payments
-	Subscriptions Subscriptions
+func NewPayments(ps *services.Payments, ss *services.Subscriptions) *Payments {
+	return &Payments{
+		ps: ps,
+		ss: ss,
+	}
 }
 
-func (e *Endpoint) PaymentHandler(c telebot.Context) error {
-	isActive, err := e.Subscriptions.IsActive(c.Sender().ID)
+func (p *Payments) PaymentHandler(c telebot.Context) error {
+	isActive, err := p.ss.IsActive(c.Sender().ID)
 	if err != nil {
 		return err
 	}
@@ -47,13 +46,13 @@ func (e *Endpoint) PaymentHandler(c telebot.Context) error {
 	return nil
 }
 
-func (e *Endpoint) PreCheckoutHandler(c telebot.Context) error {
+func (p *Payments) PreCheckoutHandler(c telebot.Context) error {
 	sub := models.Subscription{
 		UserID:  c.Sender().ID,
 		EndDate: time.Now().UTC().AddDate(0, 0, 30),
 	}
 
-	subId, err := e.Subscriptions.Add(sub)
+	subId, err := p.ss.Add(sub)
 	if err != nil {
 		return err
 	}
@@ -66,7 +65,7 @@ func (e *Endpoint) PreCheckoutHandler(c telebot.Context) error {
 		Uuid:           c.PreCheckoutQuery().Payload,
 	}
 
-	_, err = e.Payments.Add(payment)
+	_, err = p.ps.Add(payment)
 	if err != nil {
 		return err
 	}
