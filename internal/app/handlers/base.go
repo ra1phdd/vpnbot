@@ -1,21 +1,33 @@
 package handlers
 
 import (
-	"gopkg.in/telebot.v3"
+	"fmt"
+	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
 	"strconv"
 )
 
 type Base struct {
-	menu *telebot.ReplyMarkup
-	btns *services.Buttons
-	us   *services.Users
+	acceptOfferButtons, clientButtons *services.Buttons
+	us                                *services.Users
+}
+
+func NewBase(acceptOfferButtons, clientButtons *services.Buttons, us *services.Users) *Base {
+	return &Base{
+		acceptOfferButtons: acceptOfferButtons,
+		clientButtons:      clientButtons,
+		us:                 us,
+	}
 }
 
 func (b *Base) AcceptOfferHandler(c telebot.Context) error {
-	b.btns.ReplyWithButtons(b.menu, models.ClientButtons, []int{1, 2})
-	return c.Send("Чтобы начать пользоваться NSVPN, необходимо принять условия публичной [оферты](https://teletype.in/@nsvpn/Dpvwcj7llQx).", b.menu)
+	err := b.us.UpdateSign(c.Sender().ID, true)
+	if err != nil {
+		return err
+	}
+
+	return c.Send(fmt.Sprintf("Добро пожаловать, %s!", c.Sender().FirstName), b.clientButtons.AddBtns())
 }
 
 func (b *Base) StartHandler(c telebot.Context) error {
@@ -26,10 +38,16 @@ func (b *Base) StartHandler(c telebot.Context) error {
 
 	if !found {
 		var partnerID *int
-		partnerString := c.Data()
-		*partnerID, err = strconv.Atoi(partnerString)
-		if err != nil {
-			return err
+		data := c.Data()
+		if data != "" {
+			parsedID, err := strconv.Atoi(data)
+			if err != nil {
+				partnerID = nil
+			} else {
+				partnerID = &parsedID
+			}
+		} else {
+			partnerID = nil
 		}
 
 		user := models.User{
@@ -38,6 +56,7 @@ func (b *Base) StartHandler(c telebot.Context) error {
 			Firstname: c.Sender().FirstName,
 			Lastname:  c.Sender().LastName,
 			PartnerID: partnerID,
+			IsAdmin:   false,
 		}
 
 		err = b.us.Add(user)
@@ -46,8 +65,10 @@ func (b *Base) StartHandler(c telebot.Context) error {
 		}
 	}
 
-	b.btns.InlineWithButtons(b.menu, models.AcceptOfferButton, []int{1})
-	return c.Send("Чтобы начать пользоваться NSVPN, необходимо принять условия публичной [оферты](https://teletype.in/@nsvpn/Dpvwcj7llQx).", b.menu)
+	if sign, err := b.us.IsSign(c.Sender().ID); err == nil && sign {
+		return c.Send(fmt.Sprintf("Добро пожаловать, %s!", c.Sender().FirstName), b.clientButtons.AddBtns())
+	}
+	return c.Send("Чтобы начать пользоваться NSVPN, необходимо принять условия публичной [оферты](https://teletype.in/@nsvpn/Dpvwcj7llQx).", b.acceptOfferButtons.AddBtns(), telebot.ModeMarkdown)
 }
 
 func (b *Base) HelpHandler(c telebot.Context) error {

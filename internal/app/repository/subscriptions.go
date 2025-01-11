@@ -36,7 +36,7 @@ func (s *Subscriptions) GetByUserId(userId int64) (models.Subscription, error) {
 	err = db.Conn.QueryRowx(`SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, userId).StructScan(&data)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return models.Subscription{}, constants.ErrServerNotFound
+			return models.Subscription{}, constants.ErrSubNotFound
 		}
 		return models.Subscription{}, err
 	}
@@ -61,5 +61,10 @@ func (s *Subscriptions) Add(data models.Subscription) (int, error) {
 
 func (s *Subscriptions) UpdateEndDate(userId int, endDate time.Time) error {
 	_, err := db.Conn.Exec(`UPDATE subscriptions SET end_date = $1 WHERE user_id = $2`, endDate, userId)
+	return err
+}
+
+func (s *Subscriptions) UpdateIsActive(userID int64, payload string, isActive bool) error {
+	_, err := db.Conn.Exec(`UPDATE subscriptions SET is_active = $1 WHERE id = (SELECT subscription_id FROM payments WHERE user_id = $2 AND payload = $3)`, isActive, userID, payload)
 	return err
 }

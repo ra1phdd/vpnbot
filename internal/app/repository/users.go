@@ -85,10 +85,31 @@ func (u *Users) Update(user models.User) error {
 		}
 	}
 
+	if user.IsAdmin != userOld.IsAdmin {
+		_, err = tx.Exec(`UPDATE users SET is_admin = $1 WHERE id = $2`, user.IsAdmin, user.ID)
+		if err != nil {
+			return err
+		}
+	}
+
+	if user.IsSign != userOld.IsSign {
+		_, err = tx.Exec(`UPDATE users SET is_sign = $1 WHERE id = $2`, user.IsSign, user.ID)
+		if err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 
 func (u *Users) Add(user models.User) error {
-	_, err := db.Conn.Exec(`INSERT INTO users (id, username, firstname, lastname, partner_id) VALUES ($1, $2, $3, $4, $5)`, user.ID, user.Username, user.Firstname, user.Lastname, user.PartnerID)
+	var partnerID interface{}
+	if user.PartnerID != nil {
+		partnerID = *user.PartnerID
+	} else {
+		partnerID = nil
+	}
+
+	_, err := db.Conn.Exec(`INSERT INTO users (id, username, firstname, lastname, partner_id) VALUES ($1, $2, $3, $4, $5)`, user.ID, user.Username, user.Firstname, user.Lastname, partnerID)
 	return err
 }

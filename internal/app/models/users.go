@@ -6,6 +6,8 @@ type User struct {
 	Firstname string `db:"firstname"`
 	Lastname  string `db:"lastname"`
 	PartnerID *int   `db:"partner_id"`
+	IsAdmin   bool   `db:"is_admin"`
+	IsSign    bool   `db:"is_sign"`
 }
 
 type Partner struct {

@@ -3,9 +3,11 @@ package handlers
 import (
 	"fmt"
 	"github.com/google/uuid"
-	"gopkg.in/telebot.v3"
+	"go.uber.org/zap"
+	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
+	"nsvpn/pkg/logger"
 	"time"
 )
 
@@ -22,13 +24,18 @@ func NewPayments(ps *services.Payments, ss *services.Subscriptions) *Payments {
 }
 
 func (p *Payments) PaymentHandler(c telebot.Context) error {
-	isActive, err := p.ss.IsActive(c.Sender().ID)
-	if err != nil {
-		return err
-	}
-
-	if isActive {
-		return c.Send("Ошибка! У вас уже есть действующая подписка. Дождитесь её окончания")
+	var endDate time.Time
+	var amount int
+	switch c.Callback().Unique {
+	case "sub_one_month":
+		amount = 68
+		endDate = time.Now().AddDate(0, 1, 0)
+	case "sub_three_month":
+		amount = 182
+		endDate = time.Now().AddDate(0, 3, 0)
+	case "sub_six_month":
+		amount = 342
+		endDate = time.Now().AddDate(0, 6, 0)
 	}
 
 	u, err := uuid.NewUUID()
@@ -36,36 +43,51 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 		return err
 	}
 
-	invoice := CreateInvoice("XTR", fmt.Sprint(u))
-
-	err = c.Send(&invoice)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (p *Payments) PreCheckoutHandler(c telebot.Context) error {
 	sub := models.Subscription{
-		UserID:  c.Sender().ID,
-		EndDate: time.Now().UTC().AddDate(0, 0, 30),
+		UserID:   c.Sender().ID,
+		EndDate:  &endDate,
+		IsActive: false,
 	}
 
 	subId, err := p.ss.Add(sub)
 	if err != nil {
+		logger.Error("Failed add subscription", zap.Error(err))
+		return err
+	}
+
+	currencyID, err := p.ps.ConvertCurrencyToId("XTR")
+	if err != nil {
+		logger.Error("Failed convert currency to id", zap.Error(err))
 		return err
 	}
 
 	payment := models.Payment{
 		UserID:         c.Sender().ID,
-		Amount:         c.PreCheckoutQuery().Total,
-		Currency:       c.PreCheckoutQuery().Currency,
+		Amount:         float64(amount),
+		CurrencyID:     currencyID,
+		Date:           time.Now(),
 		SubscriptionID: subId,
-		Uuid:           c.PreCheckoutQuery().Payload,
+		Payload:        fmt.Sprint(u),
+		StatusID:       models.PaymentNotCompleted,
 	}
 
-	_, err = p.ps.Add(payment)
+	err = p.ps.Add(payment)
+	if err != nil {
+		logger.Error("Failed add payment", zap.Error(err))
+		return err
+	}
+
+	invoice := p.ps.CreateInvoice("XTR", fmt.Sprint(u), amount, endDate)
+	return c.Send(&invoice)
+}
+
+func (p *Payments) PreCheckoutHandler(c telebot.Context) error {
+	err := p.ps.UpdateStatus(c.Sender().ID, c.PreCheckoutQuery().Payload, models.PaymentCompleted)
+	if err != nil {
+		return err
+	}
+
+	err = p.ss.UpdateIsActive(c.Sender().ID, c.PreCheckoutQuery().Payload, true)
 	if err != nil {
 		return err
 	}
@@ -76,29 +98,4 @@ func (p *Payments) PreCheckoutHandler(c telebot.Context) error {
 	//}
 
 	return c.Send(fmt.Sprintf("Платёж успешно завершен! Номер платежа: %s", c.PreCheckoutQuery().Payload))
-}
-
-func CreateInvoice(currency string, uuid string) telebot.Invoice {
-	var amount int
-	switch currency {
-	case "XTR":
-		amount = 100
-	default:
-		amount = 1
-	}
-
-	invoice := telebot.Invoice{
-		Title:       "Оплата подписки",
-		Description: "Подписка NSVPN на 1 месяц.",
-		Payload:     uuid,
-		Currency:    currency,
-		Prices: []telebot.Price{
-			{
-				Label:  "Оплата подписки",
-				Amount: amount,
-			},
-		},
-	}
-
-	return invoice
 }

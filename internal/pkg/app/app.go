@@ -3,12 +3,14 @@ package app
 import (
 	"fmt"
 	"go.uber.org/zap"
-	tele "gopkg.in/telebot.v3"
+	"gopkg.in/telebot.v4"
 	"log"
 	"nsvpn/config"
 	"nsvpn/internal/app/handlers"
 	"nsvpn/internal/app/middleware"
-	repository2 "nsvpn/internal/app/repository"
+	"nsvpn/internal/app/models"
+	"nsvpn/internal/app/repository"
+	"nsvpn/internal/app/services"
 	"nsvpn/pkg/cache"
 	"nsvpn/pkg/db"
 	"nsvpn/pkg/logger"
@@ -16,13 +18,30 @@ import (
 )
 
 type App struct {
-	cfg                     *config.Configuration
-	paymentsRepository      *repository2.Payments
-	promocodesRepository    *repository2.Promocodes
-	serversRepository       *repository2.Servers
-	serverStatsRepository   *repository2.ServerStats
-	subscriptionsRepository *repository2.Subscriptions
-	usersRepository         *repository2.Users
+	cfg *config.Configuration
+
+	paymentsRepository      *repository.Payments
+	promocodesRepository    *repository.Promocodes
+	serversRepository       *repository.Servers
+	serverStatsRepository   *repository.ServerStats
+	subscriptionsRepository *repository.Subscriptions
+	usersRepository         *repository.Users
+
+	AcceptOfferButtons, ClientButtons, ClientButtonsWithSub, ListSubscriptions *services.Buttons
+
+	baseService          *services.Base
+	paymentsService      *services.Payments
+	subscriptionsService *services.Subscriptions
+	usersService         *services.Users
+
+	usersMiddleware *middleware.Users
+
+	baseHandler          *handlers.Base
+	paymentsHandler      *handlers.Payments
+	promocodesHandler    *handlers.Promocodes
+	subscriptionsHandler *handlers.Subscriptions
+	serversHandler       *handlers.Servers
+	usersHandler         *handlers.Users
 }
 
 func New() error {
@@ -50,72 +69,72 @@ func New() error {
 }
 
 func setupApplication(cfg *config.Configuration) *App {
-	var a *App
+	a := &App{}
 
 	// конфиг
 	a.cfg = cfg
 
 	// репозитории
-	a.paymentsRepository = repository2.NewPayments()
-	a.promocodesRepository = repository2.NewPromocodes()
-	a.serversRepository = repository2.NewServers()
-	a.serverStatsRepository = repository2.NewServerStats()
-	a.subscriptionsRepository = repository2.NewSubscriptions()
-	a.usersRepository = repository2.NewUsers()
+	a.paymentsRepository = repository.NewPayments()
+	a.promocodesRepository = repository.NewPromocodes()
+	a.serversRepository = repository.NewServers()
+	a.serverStatsRepository = repository.NewServerStats()
+	a.subscriptionsRepository = repository.NewSubscriptions()
+	a.usersRepository = repository.NewUsers()
+
+	// кнопки
+	a.AcceptOfferButtons = services.NewButtons(models.AcceptOfferButton, []int{1}, "inline")
+	a.ClientButtons = services.NewButtons(models.ClientButtons, []int{1, 2}, "reply")
+	a.ClientButtonsWithSub = services.NewButtons(models.ClientButtonsWithSub, []int{1, 2}, "reply")
+	a.ListSubscriptions = services.NewButtons(models.ListSubscriptions, []int{1, 1, 1}, "inline")
+
+	// сервисы
+	a.baseService = services.NewBase()
+	a.paymentsService = services.NewPayments(a.paymentsRepository)
+	a.subscriptionsService = services.NewSubscriptions(a.subscriptionsRepository)
+	a.usersService = services.NewUsers(a.usersRepository)
+
+	// middleware
+	a.usersMiddleware = middleware.NewUsers(a.usersRepository)
+
+	// эндпоинты
+	a.baseHandler = handlers.NewBase(a.AcceptOfferButtons, a.ClientButtons, a.usersService)
+	a.paymentsHandler = handlers.NewPayments(a.paymentsService, a.subscriptionsService)
+	//a.promocodesHandler = handlers.NewPromocodes()
+	a.subscriptionsHandler = handlers.NewSubscriptions(a.ListSubscriptions)
+	//a.serversHandler = handlers.NewServers()
+	//a.usersHandler = handlers.NewUsers()
 
 	return a
 }
 
 func RunBot(a *App) error {
-	pref := tele.Settings{
+	pref := telebot.Settings{
 		Token:  a.cfg.TelegramAPI,
-		Poller: &tele.LongPoller{Timeout: 1 * time.Second},
+		Poller: &telebot.LongPoller{Timeout: 1 * time.Second},
 	}
 
-	b, err := tele.NewBot(pref)
+	b, err := telebot.NewBot(pref)
 	if err != nil {
 		return err
 	}
 
-	menu := &tele.ReplyMarkup{ResizeKeyboard: true, IsPersistent: true}
+	b.Use(a.usersMiddleware.IsUser)
+	acceptOfferBtns := a.AcceptOfferButtons.GetBtns()
+	listSubsBtns := a.ListSubscriptions.GetBtns()
 
-	// Middleware
-	mw := middleware.Endpoint{Bot: b, User: a.users}
-	b.Use(mw.IsUser)
+	b.Handle("/start", a.baseHandler.StartHandler)
+	b.Handle("/help", a.baseHandler.HelpHandler)
+	b.Handle(acceptOfferBtns["accept_offer"], a.baseHandler.AcceptOfferHandler)
 
-	// Эндпоинты
-	baseEndpoint := handlers.Endpoint{Base: a.base}
-	//usersEndpoint := users.Endpoint{User: a.users}
-	paymentsEndpoint := handlers.Endpoint{Bot: b, Payments: a.paymentsRepository, Subscriptions: a.subscriptionsRepository}
-	serversEndpoint := handlers.Endpoint{Server: a.serversRepository}
-	promocodesEndpoint := handlers.Endpoint{Promocodes: a.promocodesRepository}
+	b.Handle("Подключить VPN", a.subscriptionsHandler.ChooseDurationHandler)
+	b.Handle(listSubsBtns["sub_one_month"], a.paymentsHandler.PaymentHandler)
+	b.Handle(listSubsBtns["sub_three_month"], a.paymentsHandler.PaymentHandler)
+	b.Handle(listSubsBtns["sub_six_month"], a.paymentsHandler.PaymentHandler)
 
-	b.Handle("/start", func(c tb.Context) error {
-		// Проверка на наличие реферальной ссылки
-		if c.Message.ReplyTo != nil {
-			// Получение ID пользователя, который отправил сообщение
-			referrerID := c.Message.ReplyTo.From.ID
-			fmt.Printf("Пользователь запустил бота по реферальной ссылке от пользователя ID: %d\n", referrerID)
-			// Здесь можно выполнить дополнительные действия, например, записать реферала в базу данных
-		}
+	b.Handle("/pay", a.paymentsHandler.PaymentHandler)
+	b.Handle(telebot.OnCheckout, a.paymentsHandler.PreCheckoutHandler)
 
-		// Ответ пользователю
-		return c.Send("Добро пожаловать! Используйте /help для получения справки.")
-	})
-
-	// Обработчики
-	b.Handle("/help", baseEndpoint.HelpHandler)
-	b.Handle("/pay", paymentsEndpoint.PaymentHandler)              // Получение инвойса на оплату
-	b.Handle(tele.OnCheckout, paymentsEndpoint.PreCheckoutHandler) // Подтверждение оплаты
-
-	// тестовые обработчики, в дальнейшем переделать
-	b.Handle("/addserv", serversEndpoint.AddServerHandler)
-	b.Handle("/addcl", serversEndpoint.AddClientHandler)
-	b.Handle("/getserv", serversEndpoint.GetServerHandler)
-	b.Handle("/getpromo", promocodesEndpoint.GetPromocodesHandler)
-
-	logger.Debug("Бот запущен")
 	b.Start()
-
 	return nil
 }

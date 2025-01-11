@@ -3,6 +3,6 @@ package services
 type Base struct {
 }
 
-func New() *Base {
+func NewBase() *Base {
 	return &Base{}
 }
