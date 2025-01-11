@@ -1,9 +1,35 @@
 package handlers
 
-type Servers struct{}
+import (
+	"go.uber.org/zap"
+	"gopkg.in/telebot.v4"
+	"nsvpn/internal/app/services"
+	"nsvpn/pkg/logger"
+)
 
-func NewServers() *Servers {
-	return &Servers{}
+type Servers struct {
+	ss            *services.Servers
+	countriesBtns *services.Buttons
+}
+
+func NewServers(ss *services.Servers) *Servers {
+	countries, err := ss.GetCountries()
+	if err != nil {
+		logger.Error("Failed to get countries from DB", zap.Error(err))
+		return nil
+	}
+
+	buttons, layout := ss.ProcessCountries(countries)
+	btns := services.NewButtons(buttons, layout, "reply")
+
+	return &Servers{
+		ss:            ss,
+		countriesBtns: btns,
+	}
+}
+
+func (s *Servers) ListCountries(c telebot.Context) error {
+	return c.Send("Список доступных стран", s.countriesBtns.AddBtns())
 }
 
 //func (e *Endpoint) GetServerHandler(c telebot.Context) error {

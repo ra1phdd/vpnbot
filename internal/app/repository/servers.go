@@ -2,9 +2,12 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"github.com/redis/go-redis/v9"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
+	"nsvpn/pkg/cache"
 	"nsvpn/pkg/db"
 )
 
@@ -98,4 +101,48 @@ func (s *Servers) Delete(id int) error {
 func (s *Servers) Add(server models.Server) error {
 	_, err := db.Conn.Exec(`INSERT INTO servers (id, ip, country_id, channel_speed, private_key, public_key, dest, server_names, short_ids) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, server.ID, server.IP, server.CountryID, server.PrivateKey, server.PublicKey, server.Dest, server.ServerNames, server.ShortIDs)
 	return err
+}
+
+func (s *Servers) GetCountries() (countries []models.Country, err error) {
+	cacheKey := "country:all"
+	cacheValue, err := cache.Rdb.Get(cache.Ctx, cacheKey).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	} else if cacheValue != "" {
+		err = json.Unmarshal([]byte(cacheValue), &countries)
+		if err != nil {
+			return nil, err
+		}
+		return countries, nil
+	}
+
+	rows, err := db.Conn.Queryx(`SELECT * FROM countries`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var data models.Country
+		if err := rows.StructScan(&data); err != nil {
+			return nil, err
+		}
+
+		countries = append(countries, data)
+	}
+
+	jsonData, err := json.Marshal(countries)
+	if err != nil {
+		return nil, err
+	}
+	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 0).Err()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(countries) == 0 {
+		return nil, constants.ErrServerNotFound
+	}
+
+	return countries, nil
 }

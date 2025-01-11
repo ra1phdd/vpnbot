@@ -30,6 +30,7 @@ func (u *Users) GetById(id int64) (models.User, error) {
 		if err != nil {
 			return models.User{}, err
 		}
+		return data, nil
 	}
 
 	err = db.Conn.QueryRowx(`SELECT * FROM users WHERE id = $1`, id).StructScan(&data)
@@ -64,21 +65,21 @@ func (u *Users) Update(user models.User) error {
 	}
 	defer tx.Rollback()
 
-	if user.Username != userOld.Username {
+	if user.Username != userOld.Username && user.Username != "" {
 		_, err = tx.Exec(`UPDATE users SET username = $1 WHERE id = $2`, user.Username, user.ID)
 		if err != nil {
 			return err
 		}
 	}
 
-	if user.Firstname != userOld.Firstname {
+	if user.Firstname != userOld.Firstname && user.Firstname != "" {
 		_, err = tx.Exec(`UPDATE users SET firstname = $1 WHERE id = $2`, user.Firstname, user.ID)
 		if err != nil {
 			return err
 		}
 	}
 
-	if user.Lastname != userOld.Lastname {
+	if user.Lastname != userOld.Lastname && user.Lastname != "" {
 		_, err = tx.Exec(`UPDATE users SET lastname = $1 WHERE id = $2`, user.Lastname, user.ID)
 		if err != nil {
 			return err

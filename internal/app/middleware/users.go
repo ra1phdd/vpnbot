@@ -5,15 +5,18 @@ import (
 	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/repository"
+	"nsvpn/internal/app/services"
 )
 
 type Users struct {
 	ur *repository.Users
+	ss *services.Subscriptions
 }
 
-func NewUsers(ur *repository.Users) *Users {
+func NewUsers(ur *repository.Users, ss *services.Subscriptions) *Users {
 	return &Users{
 		ur: ur,
+		ss: ss,
 	}
 }
 

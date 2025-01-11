@@ -32,6 +32,7 @@ type App struct {
 	baseService          *services.Base
 	paymentsService      *services.Payments
 	subscriptionsService *services.Subscriptions
+	serversService       *services.Servers
 	usersService         *services.Users
 
 	usersMiddleware *middleware.Users
@@ -93,16 +94,17 @@ func setupApplication(cfg *config.Configuration) *App {
 	a.paymentsService = services.NewPayments(a.paymentsRepository)
 	a.subscriptionsService = services.NewSubscriptions(a.subscriptionsRepository)
 	a.usersService = services.NewUsers(a.usersRepository)
+	a.serversService = services.NewServers(a.serversRepository)
 
 	// middleware
-	a.usersMiddleware = middleware.NewUsers(a.usersRepository)
+	a.usersMiddleware = middleware.NewUsers(a.usersRepository, a.subscriptionsService)
 
 	// эндпоинты
-	a.baseHandler = handlers.NewBase(a.AcceptOfferButtons, a.ClientButtons, a.usersService)
+	a.baseHandler = handlers.NewBase(a.AcceptOfferButtons, a.ClientButtons, a.ClientButtonsWithSub, a.usersService, a.subscriptionsService)
 	a.paymentsHandler = handlers.NewPayments(a.paymentsService, a.subscriptionsService)
 	//a.promocodesHandler = handlers.NewPromocodes()
 	a.subscriptionsHandler = handlers.NewSubscriptions(a.ListSubscriptions)
-	//a.serversHandler = handlers.NewServers()
+	a.serversHandler = handlers.NewServers(a.serversService)
 	//a.usersHandler = handlers.NewUsers()
 
 	return a
@@ -135,6 +137,12 @@ func RunBot(a *App) error {
 	b.Handle("/pay", a.paymentsHandler.PaymentHandler)
 	b.Handle(telebot.OnCheckout, a.paymentsHandler.PreCheckoutHandler)
 
+	b.Handle("Список серверов", a.serversHandler.ListCountries)
+
+	b.Handle("На главную", a.baseHandler.StartHandler)
+	b.Handle(telebot.OnText, a.baseHandler.OnTextHandler)
+
+	logger.Debug("бот запущен")
 	b.Start()
 	return nil
 }

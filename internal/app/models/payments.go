@@ -10,13 +10,5 @@ type Payment struct {
 	Date           time.Time `db:"date"`
 	SubscriptionID int       `db:"subscription_id"`
 	Payload        string    `db:"payload"`
-	StatusID       int       `db:"status_id"`
+	IsCompleted    bool      `db:"is_completed"`
 }
-
-type StatusPayment struct {
-	ID   int    `db:"id"`
-	Name string `db:"name"`
-}
-
-const PaymentNotCompleted = 1
-const PaymentCompleted = 2

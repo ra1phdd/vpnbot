@@ -9,15 +9,18 @@ import (
 )
 
 type Base struct {
-	acceptOfferButtons, clientButtons *services.Buttons
-	us                                *services.Users
+	acceptOfferButtons, clientButtons, clientButtonsWithSub *services.Buttons
+	us                                                      *services.Users
+	ss                                                      *services.Subscriptions
 }
 
-func NewBase(acceptOfferButtons, clientButtons *services.Buttons, us *services.Users) *Base {
+func NewBase(acceptOfferButtons, clientButtons, clientButtonsWithSub *services.Buttons, us *services.Users, ss *services.Subscriptions) *Base {
 	return &Base{
-		acceptOfferButtons: acceptOfferButtons,
-		clientButtons:      clientButtons,
-		us:                 us,
+		acceptOfferButtons:   acceptOfferButtons,
+		clientButtons:        clientButtons,
+		clientButtonsWithSub: clientButtonsWithSub,
+		us:                   us,
+		ss:                   ss,
 	}
 }
 
@@ -66,6 +69,9 @@ func (b *Base) StartHandler(c telebot.Context) error {
 	}
 
 	if sign, err := b.us.IsSign(c.Sender().ID); err == nil && sign {
+		if isActive, err := b.ss.IsActive(c.Sender().ID); err == nil && isActive {
+			return c.Send(fmt.Sprintf("Добро пожаловать, %s!", c.Sender().FirstName), b.clientButtonsWithSub.AddBtns())
+		}
 		return c.Send(fmt.Sprintf("Добро пожаловать, %s!", c.Sender().FirstName), b.clientButtons.AddBtns())
 	}
 	return c.Send("Чтобы начать пользоваться NSVPN, необходимо принять условия публичной [оферты](https://teletype.in/@nsvpn/Dpvwcj7llQx).", b.acceptOfferButtons.AddBtns(), telebot.ModeMarkdown)
@@ -75,6 +81,19 @@ func (b *Base) HelpHandler(c telebot.Context) error {
 	err := c.Send("🚀 Базовые команды\n/help - Посмотреть справку о командах\n")
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+func (b *Base) OnTextHandler(c telebot.Context) error {
+	var errSend error
+	if isActive, err := b.ss.IsActive(c.Sender().ID); err == nil && isActive {
+		errSend = c.Send("Неизвестная команда. Используйте /help для получения списка команд", b.clientButtonsWithSub.AddBtns())
+	} else {
+		errSend = c.Send("Неизвестная команда. Используйте /help для получения списка команд", b.clientButtons.AddBtns())
+	}
+	if errSend != nil {
+		return errSend
 	}
 	return nil
 }

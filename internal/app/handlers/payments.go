@@ -28,7 +28,7 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 	var amount int
 	switch c.Callback().Unique {
 	case "sub_one_month":
-		amount = 68
+		amount = 1 // 68
 		endDate = time.Now().AddDate(0, 1, 0)
 	case "sub_three_month":
 		amount = 182
@@ -68,7 +68,7 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 		Date:           time.Now(),
 		SubscriptionID: subId,
 		Payload:        fmt.Sprint(u),
-		StatusID:       models.PaymentNotCompleted,
+		IsCompleted:    false,
 	}
 
 	err = p.ps.Add(payment)
@@ -82,13 +82,15 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 }
 
 func (p *Payments) PreCheckoutHandler(c telebot.Context) error {
-	err := p.ps.UpdateStatus(c.Sender().ID, c.PreCheckoutQuery().Payload, models.PaymentCompleted)
+	err := p.ps.UpdateIsCompleted(c.Sender().ID, c.PreCheckoutQuery().Payload, true)
 	if err != nil {
+		logger.Error("Failed update isCompleted", zap.Error(err))
 		return err
 	}
 
 	err = p.ss.UpdateIsActive(c.Sender().ID, c.PreCheckoutQuery().Payload, true)
 	if err != nil {
+		logger.Error("Failed update isActive", zap.Error(err))
 		return err
 	}
 
