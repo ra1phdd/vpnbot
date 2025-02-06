@@ -9,6 +9,8 @@ import (
 type Configuration struct {
 	TelegramAPI string `env:"TELEGRAM_API,required"`
 	LoggerLevel string `env:"LOGGER_LEVEL" envDefault:"warn"`
+	GinMode     string `env:"GIN_MODE" envDefault:"release"`
+	Port        int    `env:"PORT" envDefault:"3000"`
 	DB          DB
 	Redis       Redis
 }

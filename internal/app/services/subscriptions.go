@@ -59,7 +59,7 @@ func (s *Subscriptions) UpdateIsActive(userId int64, payload string, isActive bo
 }
 
 func (s *Subscriptions) GetVlessKey(uuid string, server models.Server, countryCode string) string {
-	return fmt.Sprintf("vless://%s@%s:443/?type=tcp&security=reality&pbk=%s&fp=random&sni=%s&sid=%s&spx=%s#nsvpn-%s", uuid, server.IP, server.PublicKey, strings.TrimSuffix(server.Dest, ":443"), server.ShortIDs, url.QueryEscape("/"), countryCode)
+	return fmt.Sprintf("vless://%s@%s:443/?type=tcp&security=reality&flow=xtls-rprx-vision&pbk=%s&fp=random&sni=%s&sid=%s&spx=%s#nsvpn-%s", uuid, server.IP, server.PublicKey, strings.TrimSuffix(server.Dest, ":443"), server.ShortIDs, url.QueryEscape("/"), countryCode)
 }
 
 func (s *Subscriptions) GetLastByUserId(userId int64) (sub models.Subscription, err error) {

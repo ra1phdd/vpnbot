@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/config"
@@ -17,8 +18,9 @@ import (
 )
 
 type App struct {
-	cfg *config.Configuration
-	bot *telebot.Bot
+	cfg    *config.Configuration
+	bot    *telebot.Bot
+	router *gin.Engine
 
 	countryRepository       *repository.Country
 	currencyRepository      *repository.Currency
@@ -73,7 +75,9 @@ func New() error {
 	}
 
 	a := setupApplication(cfg)
-	return RunBot(a)
+
+	go setupServer(a)
+	return setupBot(a)
 }
 
 func setupApplication(cfg *config.Configuration) *App {
@@ -81,16 +85,6 @@ func setupApplication(cfg *config.Configuration) *App {
 
 	// cfg
 	a.cfg = cfg
-
-	var err error
-	a.bot, err = telebot.NewBot(telebot.Settings{
-		Token:  a.cfg.TelegramAPI,
-		Poller: &telebot.LongPoller{Timeout: 1 * time.Second},
-	})
-	if err != nil {
-		logger.Error("Failed creating telegram bot", zap.Error(err))
-		return nil
-	}
 
 	// repo
 	a.countryRepository = repository.NewCountry()
@@ -133,7 +127,16 @@ func setupApplication(cfg *config.Configuration) *App {
 	return a
 }
 
-func RunBot(a *App) error {
+func setupBot(a *App) (err error) {
+	a.bot, err = telebot.NewBot(telebot.Settings{
+		Token:  a.cfg.TelegramAPI,
+		Poller: &telebot.LongPoller{Timeout: 1 * time.Second},
+	})
+	if err != nil {
+		logger.Error("Error setting up telegram bot", zap.Error(err))
+		return err
+	}
+
 	a.bot.Use(a.usersMiddleware.IsUser)
 	acceptOfferBtns := a.AcceptOfferButtons.GetBtns()
 	listSubsBtns := a.ListSubscriptions.GetBtns()
@@ -157,4 +160,18 @@ func RunBot(a *App) error {
 
 	a.bot.Start()
 	return nil
+}
+
+func setupServer(a *App) {
+	gin.SetMode(a.cfg.GinMode)
+	a.router = gin.Default()
+
+	// регистрируем маршруты
+	//r.GET("/v1/client/is_found", endpointClient.IsFound)
+
+	err := a.router.Run(fmt.Sprintf(":%d", a.cfg.Port))
+
+	if err != nil {
+		logger.Fatal("server startup error", zap.Error(err))
+	}
 }
