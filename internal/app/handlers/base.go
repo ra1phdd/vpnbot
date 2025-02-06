@@ -12,15 +12,17 @@ type Base struct {
 	acceptOfferButtons, clientButtons, clientButtonsWithSub *services.Buttons
 	us                                                      *services.Users
 	ss                                                      *services.Subscriptions
+	sh                                                      *Servers
 }
 
-func NewBase(acceptOfferButtons, clientButtons, clientButtonsWithSub *services.Buttons, us *services.Users, ss *services.Subscriptions) *Base {
+func NewBase(acceptOfferButtons, clientButtons, clientButtonsWithSub *services.Buttons, us *services.Users, ss *services.Subscriptions, sh *Servers) *Base {
 	return &Base{
 		acceptOfferButtons:   acceptOfferButtons,
 		clientButtons:        clientButtons,
 		clientButtonsWithSub: clientButtonsWithSub,
 		us:                   us,
 		ss:                   ss,
+		sh:                   sh,
 	}
 }
 
@@ -86,14 +88,8 @@ func (b *Base) HelpHandler(c telebot.Context) error {
 }
 
 func (b *Base) OnTextHandler(c telebot.Context) error {
-	var errSend error
 	if isActive, err := b.ss.IsActive(c.Sender().ID); err == nil && isActive {
-		errSend = c.Send("Неизвестная команда. Используйте /help для получения списка команд", b.clientButtonsWithSub.AddBtns())
-	} else {
-		errSend = c.Send("Неизвестная команда. Используйте /help для получения списка команд", b.clientButtons.AddBtns())
+		return c.Send("Неизвестная команда. Используйте /help для получения списка команд", b.clientButtonsWithSub.AddBtns())
 	}
-	if errSend != nil {
-		return errSend
-	}
-	return nil
+	return c.Send("Неизвестная команда. Используйте /help для получения списка команд", b.clientButtons.AddBtns())
 }

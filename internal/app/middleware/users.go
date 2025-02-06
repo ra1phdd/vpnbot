@@ -1,9 +1,9 @@
 package middleware
 
 import (
+	"database/sql"
 	"errors"
 	"gopkg.in/telebot.v4"
-	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/repository"
 	"nsvpn/internal/app/services"
 )
@@ -24,7 +24,7 @@ func (u *Users) IsUser(next telebot.HandlerFunc) telebot.HandlerFunc {
 	return func(c telebot.Context) error {
 		data, err := u.ur.GetById(c.Sender().ID)
 		if err != nil {
-			if errors.Is(err, constants.ErrUserNotFound) {
+			if errors.Is(err, sql.ErrNoRows) {
 				return next(c)
 			}
 			return err

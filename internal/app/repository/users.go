@@ -1,15 +1,14 @@
 package repository
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
-	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/pkg/cache"
 	"nsvpn/pkg/db"
+	"time"
 )
 
 type Users struct{}
@@ -18,39 +17,31 @@ func NewUsers() *Users {
 	return &Users{}
 }
 
-func (u *Users) GetById(id int64) (models.User, error) {
-	var data models.User
-
+func (u *Users) GetById(id int64) (user models.User, err error) {
 	cacheKey := fmt.Sprintf("user:%d", id)
 	cacheValue, err := cache.Rdb.Get(cache.Ctx, cacheKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return models.User{}, err
 	} else if cacheValue != "" {
-		err = json.Unmarshal([]byte(cacheValue), &data)
-		if err != nil {
-			return models.User{}, err
-		}
-		return data, nil
+		err = json.Unmarshal([]byte(cacheValue), &user)
+		return user, err
 	}
 
-	err = db.Conn.QueryRowx(`SELECT * FROM users WHERE id = $1`, id).StructScan(&data)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.User{}, constants.ErrUserNotFound
-		}
-		return models.User{}, err
-	}
-
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return models.User{}, err
-	}
-	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 0).Err()
+	err = db.Conn.QueryRowx(`SELECT * FROM users WHERE id = $1`, id).StructScan(&user)
 	if err != nil {
 		return models.User{}, err
 	}
 
-	return data, nil
+	jsonData, err := json.Marshal(user)
+	if err != nil {
+		return models.User{}, err
+	}
+	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 15*time.Minute).Err()
+	if err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
 }
 
 func (u *Users) Update(user models.User) error {

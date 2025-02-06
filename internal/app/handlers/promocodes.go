@@ -27,7 +27,7 @@ func NewPromocodes(us *services.Users) *Promocodes {
 //
 //	// /get code
 //	if len(args) == 1 {
-//		item, err := p.pr.GetByCode(args[0])
+//		item, err := p.pr.Get(args[0])
 //		if err != nil {
 //			return err
 //		}

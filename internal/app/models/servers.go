@@ -5,6 +5,7 @@ import "time"
 type Server struct {
 	ID           int    `db:"id"`
 	IP           string `db:"ip"`
+	Port         int    `db:"port"`
 	CountryID    int    `db:"country_id"`
 	ChannelSpeed int    `db:"channel_speed"`
 	PrivateKey   string `db:"private_key"`

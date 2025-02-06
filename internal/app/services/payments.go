@@ -2,21 +2,21 @@ package services
 
 import (
 	"fmt"
-	"go.uber.org/zap"
 	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
-	"nsvpn/pkg/logger"
 	"time"
 )
 
 type Payments struct {
 	pr *repository.Payments
+	cr *repository.Currency
 }
 
-func NewPayments(pr *repository.Payments) *Payments {
+func NewPayments(pr *repository.Payments, cr *repository.Currency) *Payments {
 	return &Payments{
 		pr: pr,
+		cr: cr,
 	}
 }
 
@@ -42,13 +42,28 @@ func (p *Payments) ConvertCurrencyToId(currency string) (int, error) {
 		return 0, fmt.Errorf("currency is empty")
 	}
 
-	return p.pr.GetCurrencyID(currency)
+	cur, err := p.cr.Get(currency)
+	if err != nil {
+		return 0, err
+	}
+
+	return cur.ID, nil
 }
 
 func (p *Payments) Add(payment models.Payment) error {
-	if payment.CurrencyID == 0 || payment.Amount == 0 || payment.SubscriptionID == 0 || payment.UserID == 0 || payment.Payload == "" {
-		logger.Error("One of the payment fields is empty", zap.Int("currencyID", payment.CurrencyID), zap.Float64("amount", payment.Amount), zap.Int("subscriptionID", payment.SubscriptionID), zap.Int64("userID", payment.UserID), zap.String("payload", payment.Payload))
-		return fmt.Errorf("one of the payment fields is empty")
+	switch {
+	case payment.UserID == 0:
+		return fmt.Errorf("userId is empty")
+	case payment.Amount == 0:
+		return fmt.Errorf("amount is empty")
+	case payment.CurrencyID == 0:
+		return fmt.Errorf("currencyId is empty")
+	case payment.Date.After(time.Now()):
+		return fmt.Errorf("date is invalid")
+	case payment.SubscriptionID == 0:
+		return fmt.Errorf("subscriptionID is invalid")
+	case payment.Payload == "":
+		return fmt.Errorf("payload is invalid")
 	}
 
 	return p.pr.Add(payment)

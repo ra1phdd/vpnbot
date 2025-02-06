@@ -28,7 +28,7 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 	var amount int
 	switch c.Callback().Unique {
 	case "sub_one_month":
-		amount = 1 // 68
+		amount = 68
 		endDate = time.Now().AddDate(0, 1, 0)
 	case "sub_three_month":
 		amount = 182

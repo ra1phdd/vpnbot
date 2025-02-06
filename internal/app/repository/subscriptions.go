@@ -24,10 +24,7 @@ func (s *Subscriptions) GetLastByUserId(userId int64) (sub models.Subscription, 
 		return models.Subscription{}, err
 	} else if cacheValue != "" {
 		err = json.Unmarshal([]byte(cacheValue), &sub)
-		if err != nil {
-			return models.Subscription{}, err
-		}
-		return sub, nil
+		return sub, err
 	}
 
 	err = db.Conn.QueryRowx(`SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY id DESC LIMIT 1`, userId).StructScan(&sub)
@@ -39,7 +36,7 @@ func (s *Subscriptions) GetLastByUserId(userId int64) (sub models.Subscription, 
 	if err != nil {
 		return models.Subscription{}, err
 	}
-	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 0).Err()
+	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 15*time.Minute).Err()
 	if err != nil {
 		return models.Subscription{}, err
 	}
