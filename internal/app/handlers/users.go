@@ -1,7 +1,13 @@
 package handlers
 
-type Users struct{}
+import "nsvpn/pkg/logger"
 
-func NewUsers() *Users {
-	return &Users{}
+type Users struct {
+	log *logger.Logger
+}
+
+func NewUsers(log *logger.Logger) *Users {
+	return &Users{
+		log: log,
+	}
 }

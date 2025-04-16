@@ -1,191 +1,129 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
+	"gorm.io/gorm"
+	"log/slog"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
-	"nsvpn/pkg/cache"
-	"nsvpn/pkg/db"
 	"nsvpn/pkg/logger"
 	"time"
 )
 
-type Country struct{}
-
-func NewCountry() *Country {
-	return &Country{}
+type Country struct {
+	log   *logger.Logger
+	db    *gorm.DB
+	cache *redis.Client
 }
 
-const (
-	queryGetAllCountries   = `SELECT * FROM countries`
-	queryGetCountryByCode  = `SELECT * FROM countries WHERE country_code = $1`
-	queryAddCountry        = `INSERT INTO countries (country_code, country_name) VALUES ($1, $2) RETURNING id`
-	queryUpdateCountryCode = `UPDATE countries SET country_code = $1 WHERE id = $2`
-	queryUpdateCountryName = `UPDATE countries SET country_name = $1 WHERE id = $2`
-	queryDeleteCountry     = `DELETE FROM countries WHERE id = $1`
-)
+func NewCountry(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Country {
+	return &Country{
+		log:   log,
+		db:    db,
+		cache: cache,
+	}
+}
 
-func (c *Country) GetAll() (countries []models.Country, err error) {
-	method := zap.String("method", "repository_Country_GetAll")
-
+func (cr *Country) GetAll() ([]models.Country, error) {
 	cacheKey := "country:all"
-	cacheValue, err := cache.Rdb.Get(cache.Ctx, cacheKey).Result()
+	cacheValue, err := cr.cache.Get(context.Background(), cacheKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		logger.Error(constants.ErrGetDataFromCache, method, zap.Error(err))
+		cr.log.Error(constants.ErrGetDataFromCache, err)
 		return nil, err
-	} else if cacheValue != "" {
-		err = json.Unmarshal([]byte(cacheValue), &countries)
-		if err != nil {
-			logger.Error(constants.ErrUnmarshalDataFromJSON, method, zap.Error(err))
+	}
+
+	var countries []models.Country
+	if cacheValue != "" {
+		if err := json.Unmarshal([]byte(cacheValue), &countries); err != nil {
+			cr.log.Error(constants.ErrUnmarshalDataFromJSON, err)
 			return nil, err
 		}
 		return countries, nil
 	}
 
-	rows, err := db.Conn.Queryx(queryGetAllCountries)
-	if err != nil {
-		logger.Error(constants.ErrGetDataFromDB, method, zap.Error(err))
-		return nil, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var data models.Country
-		if err := rows.StructScan(&data); err != nil {
-			logger.Error(constants.ErrRowsScanFromDB, method, zap.Error(err))
-			return nil, err
+	if err := cr.db.Find(&countries).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
 		}
 
-		countries = append(countries, data)
+		cr.log.Error(constants.ErrGetDataFromDB, err)
+		return nil, err
 	}
 
 	jsonData, err := json.Marshal(countries)
 	if err != nil {
-		logger.Error(constants.ErrMarshalDataToJSON, method, zap.Error(err))
+		cr.log.Error(constants.ErrMarshalDataToJSON, err)
 		return nil, err
 	}
-	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 15*time.Minute).Err()
-	if err != nil {
-		logger.Error(constants.ErrSetDataToCache, method, zap.Error(err))
+	if err := cr.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
+		cr.log.Error(constants.ErrSetDataToCache, err)
 		return nil, err
 	}
 
 	return countries, nil
 }
 
-func (c *Country) Get(countryCode string) (country models.Country, err error) {
-	method := zap.String("method", "repository_Country_Get")
-
+func (cr *Country) Get(countryCode string) (models.Country, error) {
 	cacheKey := fmt.Sprintf("country:%s", countryCode)
-	cacheValue, err := cache.Rdb.Get(cache.Ctx, cacheKey).Result()
+	cacheValue, err := cr.cache.Get(context.Background(), cacheKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		logger.Error(constants.ErrGetDataFromCache, method, zap.String("countryCode", countryCode), zap.Error(err))
+		cr.log.Error(constants.ErrGetDataFromCache, err, slog.String("countryCode", countryCode))
 		return models.Country{}, err
-	} else if cacheValue != "" {
-		err = json.Unmarshal([]byte(cacheValue), &country)
-		if err != nil {
-			logger.Error(constants.ErrUnmarshalDataFromJSON, method, zap.String("countryCode", countryCode), zap.Error(err))
+	}
+
+	var country models.Country
+	if cacheValue != "" {
+		if err := json.Unmarshal([]byte(cacheValue), &country); err != nil {
+			cr.log.Error(constants.ErrUnmarshalDataFromJSON, err, slog.String("countryCode", countryCode))
 			return models.Country{}, err
 		}
 		return country, nil
 	}
 
-	err = db.Conn.QueryRowx(queryGetCountryByCode, countryCode).StructScan(&country)
-	if err != nil {
-		logger.Error(constants.ErrGetDataFromDB, method, zap.String("countryCode", countryCode), zap.Error(err))
+	if err := cr.db.Where("country_code = ?", countryCode).First(&country).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return models.Country{}, nil
+		}
+
+		cr.log.Error(constants.ErrGetDataFromDB, err, slog.String("countryCode", countryCode))
 		return models.Country{}, err
 	}
 
 	jsonData, err := json.Marshal(country)
 	if err != nil {
-		logger.Error(constants.ErrMarshalDataToJSON, method, zap.String("countryCode", countryCode), zap.Error(err))
+		cr.log.Error(constants.ErrMarshalDataToJSON, err, slog.String("countryCode", countryCode))
 		return models.Country{}, err
 	}
-	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 15*time.Minute).Err()
-	if err != nil {
-		logger.Error(constants.ErrSetDataToCache, method, zap.String("countryCode", countryCode), zap.Error(err))
+	if err := cr.cache.Set(context.Background(), cacheKey, jsonData, 0).Err(); err != nil {
+		cr.log.Error(constants.ErrSetDataToCache, err, slog.String("countryCode", countryCode))
 		return models.Country{}, err
 	}
 
 	return country, nil
 }
 
-func (c *Country) Add(country models.Country) (id int, err error) {
-	method := zap.String("method", "repository_Country_Add")
-
-	err = db.Conn.QueryRow(queryAddCountry, country.CountryCode, country.CountryName).Scan(&id)
-	if err != nil {
-		logger.Error(constants.ErrExecQueryFromDB, method, zap.Any("country", country), zap.Error(err))
+func (cr *Country) Add(country models.Country) (int, error) {
+	if err := cr.db.Create(&country).Error; err != nil {
+		cr.log.Error(constants.ErrExecQueryFromDB, err, slog.Any("country", country))
 		return 0, err
 	}
 
-	return id, nil
+	return country.ID, nil
 }
 
-func (c *Country) Update(country models.Country) error {
-	method := zap.String("method", "repository_Country_Update")
-
-	countryOld, err := c.Get(country.CountryCode)
-	if err != nil {
-		logger.Error("Error executing the Get function", method, zap.Any("country", country), zap.Error(err))
-		return err
-	}
-
-	tx, err := db.Conn.Begin()
-	if err != nil {
-		logger.Error(constants.ErrBeginTx, method, zap.Any("country", country), zap.Any("countryOld", countryOld), zap.Error(err))
-		return err
-	}
-	defer tx.Rollback()
-
-	if country.CountryCode != countryOld.CountryCode && country.CountryCode != "" {
-		_, err = tx.Exec(queryUpdateCountryCode, country.CountryCode, countryOld.ID)
-		if err != nil {
-			logger.Error(constants.ErrExecQueryFromDB, method, zap.Any("country", country), zap.Any("countryOld", countryOld), zap.Error(err))
-			return err
-		}
-	}
-
-	if country.CountryName != countryOld.CountryName && country.CountryName != "" {
-		_, err = tx.Exec(queryUpdateCountryName, country.CountryCode, countryOld.ID)
-		if err != nil {
-			logger.Error(constants.ErrExecQueryFromDB, method, zap.Any("country", country), zap.Any("countryOld", countryOld), zap.Error(err))
-			return err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		logger.Error(constants.ErrCommitTx, method, zap.Any("country", country), zap.Any("countryOld", countryOld), zap.Error(err))
-		return err
-	}
-
-	cacheKey := fmt.Sprintf("country:%s", country.CountryCode)
-	err = cache.Rdb.Del(cache.Ctx, cacheKey).Err()
-	if err != nil {
-		logger.Error(constants.ErrDeleteDataFromCache, method, zap.Any("country", country), zap.Any("countryOld", countryOld), zap.Error(err))
-		return err
-	}
-
-	return nil
-}
-
-func (c *Country) Delete(countryCode string) (err error) {
-	method := zap.String("method", "repository_Country_Delete")
-
-	_, err = db.Conn.Exec(queryDeleteCountry, countryCode)
-	if err != nil {
-		logger.Error(constants.ErrExecQueryFromDB, method, zap.String("countryCode", countryCode), zap.Error(err))
+func (cr *Country) Delete(countryCode string) error {
+	if err := cr.db.Where("country_code = ?", countryCode).Delete(&models.Country{}).Error; err != nil {
+		cr.log.Error(constants.ErrExecQueryFromDB, err)
 		return err
 	}
 
 	cacheKey := fmt.Sprintf("country:%s", countryCode)
-	err = cache.Rdb.Del(cache.Ctx, cacheKey).Err()
-	if err != nil {
-		logger.Error(constants.ErrDeleteDataFromCache, method, zap.String("countryCode", countryCode), zap.Error(err))
+	if err := cr.cache.Del(context.Background(), cacheKey).Err(); err != nil {
+		cr.log.Error(constants.ErrDeleteDataFromCache, err)
 		return err
 	}
 

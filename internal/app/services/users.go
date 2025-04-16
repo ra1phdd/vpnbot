@@ -1,83 +1,104 @@
 package services
 
 import (
-	"database/sql"
 	"errors"
-	"fmt"
-	"go.uber.org/zap"
+	"log/slog"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
 	"nsvpn/pkg/logger"
 )
 
 type Users struct {
-	ur *repository.Users
+	log *logger.Logger
+	ur  *repository.Users
 }
 
-func NewUsers(ur *repository.Users) *Users {
+func NewUsers(log *logger.Logger, ur *repository.Users) *Users {
 	return &Users{
-		ur: ur,
+		log: log,
+		ur:  ur,
 	}
 }
 
-func (u *Users) IsFound(id int64) (bool, error) {
-	_, err := u.ur.GetById(id)
+func (us *Users) IsFound(id int64) (bool, error) {
+	if id == 0 {
+		return false, errors.New("id is empty")
+	}
+
+	data, err := us.ur.GetById(id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		logger.Error("Error while getting user by id", zap.Int64("id", id), zap.Error(err))
+		us.log.Error("Error while getting user by id", err, slog.Int64("id", id))
 		return false, err
 	}
 
+	if data == (models.User{}) {
+		return false, nil
+	}
 	return true, nil
 }
 
-func (u *Users) IsAdmin(id int64) (bool, error) {
-	user, err := u.ur.GetById(id)
+func (us *Users) IsAdmin(id int64) (bool, error) {
+	if id == 0 {
+		return false, errors.New("id is empty")
+	}
+
+	data, err := us.ur.GetById(id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		logger.Error("Error while getting user by id", zap.Int64("id", id), zap.Error(err))
+		us.log.Error("Error while getting user by id", err, slog.Int64("id", id))
 		return false, err
 	}
 
-	return user.IsAdmin, nil
+	if data == (models.User{}) {
+		return false, nil
+	}
+	return data.IsAdmin, nil
 }
 
-func (u *Users) IsSign(id int64) (bool, error) {
-	user, err := u.ur.GetById(id)
+func (us *Users) IsSign(id int64) (bool, error) {
+	if id == 0 {
+		return false, errors.New("id is empty")
+	}
+
+	data, err := us.ur.GetById(id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		logger.Error("Error while getting user by id", zap.Int64("id", id), zap.Error(err))
+		us.log.Error("Error while getting user by id", err, slog.Int64("id", id))
 		return false, err
 	}
 
-	return user.IsSign, nil
+	if data == (models.User{}) {
+		return false, nil
+	}
+	return data.IsSign, nil
 }
 
-func (u *Users) Add(user models.User) error {
-	if user.ID == 0 {
-		return fmt.Errorf("userId is empty")
+func (us *Users) GetById(id int64) (models.User, error) {
+	if id == 0 {
+		return models.User{}, errors.New("id is empty")
 	}
 
-	return u.ur.Add(user)
+	return us.ur.GetById(id)
 }
 
-func (u *Users) UpdateSign(id int64, value bool) error {
-	user, err := u.ur.GetById(id)
-	if err != nil {
-		logger.Error("Error while getting user by id", zap.Int64("id", id), zap.Error(err))
-		return err
+func (us *Users) Add(user models.User) error {
+	if user.ID == 0 && user.Username == "" {
+		return errors.New("id or username is empty")
 	}
 
-	if user.IsSign == value {
-		return nil
-	}
-	user.IsSign = value
+	return us.ur.Add(user)
+}
 
-	return u.ur.Update(user)
+func (us *Users) Update(id int64, user models.User) error {
+	if id == 0 {
+		return errors.New("id is empty")
+	}
+
+	return us.ur.Update(id, user)
+}
+
+func (us *Users) Delete(id int64) error {
+	if id == 0 {
+		return errors.New("id is empty")
+	}
+
+	return us.ur.Delete(id)
 }

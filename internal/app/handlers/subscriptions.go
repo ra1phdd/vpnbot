@@ -3,18 +3,21 @@ package handlers
 import (
 	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/services"
+	"nsvpn/pkg/logger"
 )
 
 type Subscriptions struct {
-	ListSubscriptions *services.Buttons
+	log     *logger.Logger
+	subBtns *services.Buttons
 }
 
-func NewSubscriptions(ListSubscriptions *services.Buttons) *Subscriptions {
+func NewSubscriptions(log *logger.Logger, subBtns *services.Buttons) *Subscriptions {
 	return &Subscriptions{
-		ListSubscriptions: ListSubscriptions,
+		log:     log,
+		subBtns: subBtns,
 	}
 }
 
 func (s *Subscriptions) ChooseDurationHandler(c telebot.Context) error {
-	return c.Send("Выберите подписку:", s.ListSubscriptions.AddBtns())
+	return c.Send("Выберите подписку:", s.subBtns.AddBtns())
 }

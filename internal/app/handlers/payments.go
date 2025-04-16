@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
@@ -12,14 +11,20 @@ import (
 )
 
 type Payments struct {
-	ps *services.Payments
-	ss *services.Subscriptions
+	log                  *logger.Logger
+	cs                   *services.Currency
+	ps                   *services.Payments
+	ss                   *services.Subscriptions
+	clientButtonsWithSub *services.Buttons
 }
 
-func NewPayments(ps *services.Payments, ss *services.Subscriptions) *Payments {
+func NewPayments(log *logger.Logger, ps *services.Payments, cs *services.Currency, ss *services.Subscriptions, clientButtonsWithSub *services.Buttons) *Payments {
 	return &Payments{
-		ps: ps,
-		ss: ss,
+		log:                  log,
+		cs:                   cs,
+		ps:                   ps,
+		ss:                   ss,
+		clientButtonsWithSub: clientButtonsWithSub,
 	}
 }
 
@@ -38,9 +43,13 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 		endDate = time.Now().AddDate(0, 6, 0)
 	}
 
+	if c.Sender().ID == 1230045591 {
+		amount = 1
+	}
+
 	u, err := uuid.NewUUID()
 	if err != nil {
-		return err
+		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
 	sub := models.Subscription{
@@ -51,20 +60,20 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 
 	subId, err := p.ss.Add(sub)
 	if err != nil {
-		logger.Error("Failed add subscription", zap.Error(err))
-		return err
+		p.log.Error("Failed add subscription", err)
+		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
-	currencyID, err := p.ps.ConvertCurrencyToId("XTR")
+	currency, err := p.cs.Get("XTR")
 	if err != nil {
-		logger.Error("Failed convert currency to id", zap.Error(err))
-		return err
+		p.log.Error("Failed convert currency to id", err)
+		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
 	payment := models.Payment{
 		UserID:         c.Sender().ID,
 		Amount:         float64(amount),
-		CurrencyID:     currencyID,
+		CurrencyID:     currency.ID,
 		Date:           time.Now(),
 		SubscriptionID: subId,
 		Payload:        fmt.Sprint(u),
@@ -73,8 +82,8 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 
 	err = p.ps.Add(payment)
 	if err != nil {
-		logger.Error("Failed add payment", zap.Error(err))
-		return err
+		p.log.Error("Failed add payment", err)
+		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
 	invoice := p.ps.CreateInvoice("XTR", fmt.Sprint(u), amount, endDate)
@@ -82,16 +91,21 @@ func (p *Payments) PaymentHandler(c telebot.Context) error {
 }
 
 func (p *Payments) PreCheckoutHandler(c telebot.Context) error {
-	err := p.ps.UpdateIsCompleted(c.Sender().ID, c.PreCheckoutQuery().Payload, true)
+	sub, err := p.ss.GetLastByUserId(c.Sender().ID, false)
 	if err != nil {
-		logger.Error("Failed update isCompleted", zap.Error(err))
-		return err
+		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
-	err = p.ss.UpdateIsActive(c.Sender().ID, c.PreCheckoutQuery().Payload, true)
+	err = p.ps.UpdateIsCompleted(c.Sender().ID, c.PreCheckoutQuery().Payload, true)
 	if err != nil {
-		logger.Error("Failed update isActive", zap.Error(err))
-		return err
+		p.log.Error("Failed update isCompleted", err)
+		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
+	}
+
+	err = p.ss.UpdateIsActive(sub.ID, c.Sender().ID, true)
+	if err != nil {
+		p.log.Error("Failed update isActive", err)
+		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
 	//err = e.Bot.Accept(c.PreCheckoutQuery())
@@ -99,5 +113,5 @@ func (p *Payments) PreCheckoutHandler(c telebot.Context) error {
 	//	return err
 	//}
 
-	return c.Send(fmt.Sprintf("Платёж успешно завершен! Номер платежа: %s", c.PreCheckoutQuery().Payload))
+	return c.Send(fmt.Sprintf("Платёж успешно завершен! Номер платежа: %s", c.PreCheckoutQuery().Payload), p.clientButtonsWithSub.AddBtns())
 }

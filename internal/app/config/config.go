@@ -14,18 +14,19 @@ type Configuration struct {
 }
 
 type DB struct {
-	DBUser     string `env:"DB_USER,required"`
-	DBPassword string `env:"DB_PASSWORD,required"`
-	DBName     string `env:"DB_NAME,required"`
-	DBHost     string `env:"DB_HOST,required"`
+	Address  string `env:"DB_ADDR,required"`
+	Port     int    `env:"DB_PORT" envDefault:"5432"`
+	Username string `env:"DB_USER,required"`
+	Password string `env:"DB_PASS,required"`
+	Name     string `env:"DB_NAME,required"`
 }
 
 type Redis struct {
-	RedisAddr     string `env:"REDIS_ADDR,required"`
-	RedisPort     string `env:"REDIS_PORT" envDefault:"6379"`
-	RedisUsername string `env:"REDIS_USERNAME,required"`
-	RedisPassword string `env:"REDIS_PASSWORD,required"`
-	RedisDBId     int    `env:"REDIS_DB_ID,required"`
+	Address  string `env:"REDIS_ADDR,required"`
+	Port     int    `env:"REDIS_PORT" envDefault:"6379"`
+	Username string `env:"REDIS_USER,required"`
+	Password string `env:"REDIS_PASS,required"`
+	DB       int    `env:"REDIS_DB,required"`
 }
 
 func NewConfig(files ...string) (*Configuration, error) {
@@ -44,6 +45,9 @@ func NewConfig(files ...string) (*Configuration, error) {
 		return nil, err
 	}
 	err = env.Parse(&cfg.DB)
+	if err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
 }

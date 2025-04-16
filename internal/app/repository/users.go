@@ -1,107 +1,158 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+	"log/slog"
 	"nsvpn/internal/app/models"
-	"nsvpn/pkg/cache"
-	"nsvpn/pkg/db"
+	"nsvpn/pkg/logger"
 	"time"
 )
 
-type Users struct{}
-
-func NewUsers() *Users {
-	return &Users{}
+type Users struct {
+	log   *logger.Logger
+	db    *gorm.DB
+	cache *redis.Client
 }
 
-func (u *Users) GetById(id int64) (user models.User, err error) {
+func NewUsers(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Users {
+	return &Users{
+		log:   log,
+		db:    db,
+		cache: cache,
+	}
+}
+
+func (ur *Users) GetById(id int64) (models.User, error) {
 	cacheKey := fmt.Sprintf("user:%d", id)
-	cacheValue, err := cache.Rdb.Get(cache.Ctx, cacheKey).Result()
+	cacheValue, err := ur.cache.Get(context.Background(), cacheKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
+		ur.log.Error("Error getting user from cache", err, slog.Int64("id", id))
 		return models.User{}, err
-	} else if cacheValue != "" {
-		err = json.Unmarshal([]byte(cacheValue), &user)
-		return user, err
 	}
 
-	err = db.Conn.QueryRowx(`SELECT * FROM users WHERE id = $1`, id).StructScan(&user)
-	if err != nil {
+	var user models.User
+	if cacheValue != "" {
+		if err := json.Unmarshal([]byte(cacheValue), &user); err != nil {
+			ur.log.Error("Error unmarshaling user from cache", err, slog.Int64("id", id))
+			return models.User{}, err
+		}
+		return user, nil
+	}
+
+	if err := ur.db.First(&user, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return models.User{}, nil
+		}
+
+		ur.log.Error("Error getting user from DB", err, slog.Int64("id", id))
 		return models.User{}, err
 	}
 
 	jsonData, err := json.Marshal(user)
 	if err != nil {
+		ur.log.Error("Error marshaling user to JSON", err, slog.Int64("id", id))
 		return models.User{}, err
 	}
-	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 15*time.Minute).Err()
-	if err != nil {
+
+	if err := ur.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
+		ur.log.Error("Error setting user to cache", err, slog.Int64("id", id))
 		return models.User{}, err
 	}
 
 	return user, nil
 }
 
-func (u *Users) Update(user models.User) error {
-	userOld, err := u.GetById(user.ID)
+func (ur *Users) Add(user models.User) error {
+	if err := ur.db.Create(&user).Error; err != nil {
+		ur.log.Error("Error inserting user into DB", err, slog.Any("user", user))
+		return err
+	}
+	return nil
+}
+
+func (ur *Users) Update(id int64, user models.User) error {
+	userOld, err := ur.GetById(id)
 	if err != nil {
+		ur.log.Error("Error getting existing user", err, slog.Any("user", user))
 		return err
 	}
 
-	tx, err := db.Conn.Begin()
-	if err != nil {
-		return err
+	tx := ur.db.Begin()
+	if tx.Error != nil {
+		ur.log.Error("Error starting transaction", tx.Error)
+		return tx.Error
 	}
-	defer tx.Rollback()
 
-	if user.Username != userOld.Username && user.Username != "" {
-		_, err = tx.Exec(`UPDATE users SET username = $1 WHERE id = $2`, user.Username, user.ID)
-		if err != nil {
+	if user.Username != "" && user.Username != userOld.Username {
+		if err := tx.Model(&userOld).Where("id = ?", id).Update("username", user.Username).Error; err != nil {
+			tx.Rollback()
+			ur.log.Error("Error updating username", err)
 			return err
 		}
 	}
 
-	if user.Firstname != userOld.Firstname && user.Firstname != "" {
-		_, err = tx.Exec(`UPDATE users SET firstname = $1 WHERE id = $2`, user.Firstname, user.ID)
-		if err != nil {
+	if user.Firstname != "" && user.Firstname != userOld.Firstname {
+		if err := tx.Model(&userOld).Where("id = ?", id).Update("firstname", user.Firstname).Error; err != nil {
+			tx.Rollback()
+			ur.log.Error("Error updating firstname", err)
 			return err
 		}
 	}
 
-	if user.Lastname != userOld.Lastname && user.Lastname != "" {
-		_, err = tx.Exec(`UPDATE users SET lastname = $1 WHERE id = $2`, user.Lastname, user.ID)
-		if err != nil {
+	if user.Lastname != "" && user.Lastname != userOld.Lastname {
+		if err := tx.Model(&userOld).Where("id = ?", id).Update("lastname", user.Lastname).Error; err != nil {
+			tx.Rollback()
+			ur.log.Error("Error updating lastname", err)
 			return err
 		}
 	}
 
 	if user.IsAdmin != userOld.IsAdmin {
-		_, err = tx.Exec(`UPDATE users SET is_admin = $1 WHERE id = $2`, user.IsAdmin, user.ID)
-		if err != nil {
+		if err := tx.Model(&userOld).Where("id = ?", id).Update("is_admin", user.IsAdmin).Error; err != nil {
+			tx.Rollback()
+			ur.log.Error("Error updating is_admin", err)
 			return err
 		}
 	}
 
 	if user.IsSign != userOld.IsSign {
-		_, err = tx.Exec(`UPDATE users SET is_sign = $1 WHERE id = $2`, user.IsSign, user.ID)
-		if err != nil {
+		if err := tx.Model(&userOld).Where("id = ?", id).Update("is_sign", user.IsSign).Error; err != nil {
+			tx.Rollback()
+			ur.log.Error("Error updating is_sign", err)
 			return err
 		}
 	}
 
-	return tx.Commit()
-}
-
-func (u *Users) Add(user models.User) error {
-	var partnerID interface{}
-	if user.PartnerID != nil {
-		partnerID = *user.PartnerID
-	} else {
-		partnerID = nil
+	if err := tx.Commit().Error; err != nil {
+		ur.log.Error("Error committing transaction", err)
+		return err
 	}
 
-	_, err := db.Conn.Exec(`INSERT INTO users (id, username, firstname, lastname, partner_id) VALUES ($1, $2, $3, $4, $5)`, user.ID, user.Username, user.Firstname, user.Lastname, partnerID)
-	return err
+	cacheKey := fmt.Sprintf("user:%d", id)
+	if err := ur.cache.Del(context.Background(), cacheKey).Err(); err != nil {
+		ur.log.Error("Error deleting user from cache", err)
+		return err
+	}
+
+	return nil
+}
+
+func (ur *Users) Delete(id int64) error {
+	if err := ur.db.Delete(&models.User{}, id).Error; err != nil {
+		ur.log.Error("Error deleting user from DB", err, slog.Int64("id", id))
+		return err
+	}
+
+	cacheKey := fmt.Sprintf("user:%d", id)
+	if err := ur.cache.Del(context.Background(), cacheKey).Err(); err != nil {
+		ur.log.Error("Error deleting user from cache", err, slog.Int64("id", id))
+		return err
+	}
+
+	return nil
 }

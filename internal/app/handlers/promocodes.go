@@ -2,15 +2,18 @@ package handlers
 
 import (
 	"nsvpn/internal/app/services"
+	"nsvpn/pkg/logger"
 )
 
 type Promocodes struct {
-	us *services.Users
+	log *logger.Logger
+	ps  *services.Promocodes
 }
 
-func NewPromocodes(us *services.Users) *Promocodes {
+func NewPromocodes(log *logger.Logger, ps *services.Promocodes) *Promocodes {
 	return &Promocodes{
-		us: us,
+		log: log,
+		ps:  ps,
 	}
 }
 
@@ -23,7 +26,7 @@ func NewPromocodes(us *services.Users) *Promocodes {
 //	}
 //
 //	args := c.Args()
-//	var promocodes []models.PromoCode
+//	var promocodes []models.Promocode
 //
 //	// /get code
 //	if len(args) == 1 {

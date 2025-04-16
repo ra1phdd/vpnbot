@@ -1,114 +1,129 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
+	"gorm.io/gorm"
+	"log/slog"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
-	"nsvpn/pkg/cache"
-	"nsvpn/pkg/db"
 	"nsvpn/pkg/logger"
 	"time"
 )
 
-type Currency struct{}
-
-func NewCurrency() *Currency {
-	return &Currency{}
+type Currency struct {
+	log   *logger.Logger
+	db    *gorm.DB
+	cache *redis.Client
 }
 
-const (
-	queryGetCurrency        = `SELECT * FROM currencies WHERE currency_code = $1`
-	queryAddCurrency        = `INSERT INTO currencies (currency_code) VALUES ($1) RETURNING id`
-	queryUpdateCurrencyCode = `UPDATE currencies SET currency_code = $1 WHERE id = $2`
-	queryDeleteCurrency     = `DELETE FROM currencies WHERE currency_code = $1`
-)
+func NewCurrency(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Currency {
+	return &Currency{
+		log:   log,
+		db:    db,
+		cache: cache,
+	}
+}
 
-func (c *Currency) Get(currencyCode string) (currency models.Currency, err error) {
-	method := zap.String("method", "repository_Currency_Get")
-
-	cacheKey := fmt.Sprintf("currency:%s", currencyCode)
-	cacheValue, err := cache.Rdb.Get(cache.Ctx, cacheKey).Result()
+func (cr *Currency) GetAll() ([]models.Currency, error) {
+	cacheKey := "currency:all"
+	cacheValue, err := cr.cache.Get(context.Background(), cacheKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		logger.Error(constants.ErrGetDataFromCache, method, zap.String("currencyCode", currencyCode), zap.Error(err))
+		cr.log.Error(constants.ErrGetDataFromCache, err)
+		return nil, err
+	}
+
+	var currencies []models.Currency
+	if cacheValue != "" {
+		if err := json.Unmarshal([]byte(cacheValue), &currencies); err != nil {
+			cr.log.Error(constants.ErrUnmarshalDataFromJSON, err)
+			return nil, err
+		}
+		return currencies, nil
+	}
+
+	if err := cr.db.Find(&currencies).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+
+		cr.log.Error(constants.ErrGetDataFromDB, err)
+		return nil, err
+	}
+
+	jsonData, err := json.Marshal(currencies)
+	if err != nil {
+		cr.log.Error(constants.ErrMarshalDataToJSON, err)
+		return nil, err
+	}
+
+	if err := cr.cache.Set(context.Background(), cacheKey, jsonData, 0).Err(); err != nil {
+		cr.log.Error(constants.ErrSetDataToCache, err)
+		return nil, err
+	}
+
+	return currencies, nil
+}
+
+func (cr *Currency) Get(currencyCode string) (models.Currency, error) {
+	cacheKey := fmt.Sprintf("currency:%s", currencyCode)
+	cacheValue, err := cr.cache.Get(context.Background(), cacheKey).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		cr.log.Error(constants.ErrGetDataFromCache, err, slog.String("currencyCode", currencyCode))
 		return models.Currency{}, err
-	} else if cacheValue != "" {
-		err = json.Unmarshal([]byte(cacheValue), &currency)
-		if err != nil {
-			logger.Error(constants.ErrUnmarshalDataFromJSON, method, zap.String("currencyCode", currencyCode), zap.Error(err))
+	}
+
+	var currency models.Currency
+	if cacheValue != "" {
+		if err := json.Unmarshal([]byte(cacheValue), &currency); err != nil {
+			cr.log.Error(constants.ErrUnmarshalDataFromJSON, err, slog.String("currencyCode", currencyCode))
 			return models.Currency{}, err
 		}
 		return currency, nil
 	}
 
-	err = db.Conn.QueryRowx(queryGetCurrency, currency).Scan(&currency)
-	if err != nil {
-		logger.Error(constants.ErrGetDataFromDB, method, zap.String("currencyCode", currencyCode), zap.Error(err))
+	if err := cr.db.Where("currency_code = ?", currencyCode).First(&currency).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return models.Currency{}, nil
+		}
+
+		cr.log.Error(constants.ErrGetDataFromDB, err, slog.String("currencyCode", currencyCode))
 		return models.Currency{}, err
 	}
 
 	jsonData, err := json.Marshal(currency)
 	if err != nil {
-		logger.Error(constants.ErrMarshalDataToJSON, method, zap.String("currencyCode", currencyCode), zap.Error(err))
+		cr.log.Error(constants.ErrMarshalDataToJSON, err, slog.String("currencyCode", currencyCode))
 		return models.Currency{}, err
 	}
-	err = cache.Rdb.Set(cache.Ctx, cacheKey, jsonData, 15*time.Minute).Err()
-	if err != nil {
-		logger.Error(constants.ErrSetDataToCache, method, zap.String("currencyCode", currencyCode), zap.Error(err))
+	if err := cr.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
+		cr.log.Error(constants.ErrSetDataToCache, err, slog.String("currencyCode", currencyCode))
 		return models.Currency{}, err
 	}
 
 	return currency, nil
 }
 
-func (c *Currency) Add(currencyCode string) (id int, err error) {
-	method := zap.String("method", "repository_Currency_Add")
-
-	err = db.Conn.QueryRow(queryAddCurrency, currencyCode).Scan(&id)
-	if err != nil {
-		logger.Error(constants.ErrExecQueryFromDB, method, zap.String("currencyCode", currencyCode), zap.Error(err))
+func (cr *Currency) Add(currency models.Currency) (int, error) {
+	if err := cr.db.Create(&currency).Error; err != nil {
+		cr.log.Error(constants.ErrExecQueryFromDB, err, slog.Any("currency", currency))
 		return 0, err
 	}
-
-	return id, nil
+	return currency.ID, nil
 }
 
-func (c *Currency) Update(currencyCodeOld, currencyCode string) error {
-	method := zap.String("method", "repository_Country_Update")
-
-	currencyOld, err := c.Get(currencyCodeOld)
-	if err != nil {
-		logger.Error("Error executing the Get function", method, zap.String("currencyCodeOld", currencyCodeOld), zap.String("currencyCode", currencyCode), zap.Error(err))
-		return err
-	}
-
-	if currencyCode != currencyOld.CurrencyCode && currencyCode != "" {
-		_, err = db.Conn.Queryx(queryUpdateCurrencyCode, currencyCode, currencyOld.ID)
-		if err != nil {
-			logger.Error(constants.ErrExecQueryFromDB, method, zap.String("currencyCodeOld", currencyCodeOld), zap.String("currencyCode", currencyCode), zap.Any("currencyOld", currencyOld), zap.Error(err))
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (c *Currency) Delete(currencyCode string) (err error) {
-	method := zap.String("method", "repository_Currency_Delete")
-
-	_, err = db.Conn.Exec(queryDeleteCurrency, currencyCode)
-	if err != nil {
-		logger.Error(constants.ErrExecQueryFromDB, method, zap.String("currencyCode", currencyCode), zap.Error(err))
+func (cr *Currency) Delete(currencyCode string) error {
+	if err := cr.db.Where("currency_code = ?", currencyCode).Delete(&models.Currency{}).Error; err != nil {
+		cr.log.Error(constants.ErrExecQueryFromDB, err, slog.String("currencyCode", currencyCode))
 		return err
 	}
 
 	cacheKey := fmt.Sprintf("currency:%s", currencyCode)
-	err = cache.Rdb.Del(cache.Ctx, cacheKey).Err()
-	if err != nil {
-		logger.Error(constants.ErrDeleteDataFromCache, method, zap.String("currencyCode", currencyCode), zap.Error(err))
+	if err := cr.cache.Del(context.Background(), cacheKey).Err(); err != nil {
+		cr.log.Error(constants.ErrDeleteDataFromCache, err, slog.String("currencyCode", currencyCode))
 		return err
 	}
 

@@ -1,38 +1,41 @@
 package handlers
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"go.uber.org/zap"
 	"gopkg.in/telebot.v4"
+	"nsvpn/internal/app/api"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
 	"nsvpn/pkg/logger"
+	"sync"
 )
 
 type Servers struct {
-	bot                        *telebot.Bot
-	kh                         *Keys
-	ss                         *services.Servers
-	cs                         *services.Country
-	countriesBtns, serversBtns *services.Buttons
+	log           *logger.Logger
+	bot           *telebot.Bot
+	kh            *Keys
+	ss            *services.Servers
+	cs            *services.Country
+	countriesBtns *services.Buttons
+	serversBtns   *services.Buttons
 }
 
-func NewServers(bot *telebot.Bot, kh *Keys, cs *services.Country, ss *services.Servers) *Servers {
-	countries, err := cs.GetCountries()
+func NewServers(log *logger.Logger, bot *telebot.Bot, ss *services.Servers, kh *Keys, cs *services.Country) *Servers {
+	countries, err := cs.GetAll()
 	if err != nil {
-		logger.Error("Failed to get countries from DB", zap.Error(err))
+		log.Error("Failed to get countries from db", err)
 		return nil
 	}
 
-	buttons, layout := ss.ProcessCountries(countries)
+	buttons, layout := cs.ProcessButtons(countries)
 	countriesBtns := services.NewButtons(buttons, layout, "reply")
 
 	s := &Servers{
+		log:           log,
 		bot:           bot,
 		kh:            kh,
 		ss:            ss,
+		cs:            cs,
 		countriesBtns: countriesBtns,
 	}
 
@@ -67,34 +70,51 @@ func (s *Servers) CountryHandler(c telebot.Context) error {
 func (s *Servers) InfoHandler(c telebot.Context, country models.Country) error {
 	servers, err := s.ss.GetByCC(country.CountryCode)
 	if err != nil {
-		return err
+		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
 	var msg string
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	results := make([]string, len(servers))
+
 	for i, serv := range servers {
-		authKey := sha256.Sum256([]byte(fmt.Sprintf("%s%s", serv.PublicKey, serv.PrivateKey)))
-		load, err := s.ss.GetLoadRequest(serv.IP, serv.Port, hex.EncodeToString(authKey[:]))
-		if err != nil {
-			return err
-		}
+		wg.Add(1)
+		go func(idx int, serv models.Server) {
+			defer wg.Done()
 
-		var loadMsg string
-		switch {
-		case load <= 0.3:
-			loadMsg = "низкая 🟢"
-		case load > 0.3 && load <= 0.7:
-			loadMsg = "средняя 🌕"
-		case load > 0.7 && load <= 0.95:
-			loadMsg = "высокая 🟠"
-		case load > 0.95:
-			loadMsg = "критическая 🔴"
-		}
+			var loadMsg string
+			sa := api.NewServer(serv)
+			load, err := sa.GetLoadRequest()
 
-		msg += fmt.Sprintf("%s-%d\n🚀 IP-адрес: %s\n🎛 Нагрузка на сервер: %s\n\n", country.CountryName, i+1, serv.IP, loadMsg)
+			if err != nil {
+				loadMsg = "не отвечает 🔴"
+			} else {
+				switch {
+				case load <= 0.3:
+					loadMsg = "низкая 🟢"
+				case load > 0.3 && load <= 0.7:
+					loadMsg = "средняя 🌕"
+				case load > 0.7 && load <= 0.95:
+					loadMsg = "высокая 🟠"
+				case load > 0.95:
+					loadMsg = "критическая 🔴"
+				}
+			}
+
+			mu.Lock()
+			results[idx] = fmt.Sprintf("%s-%d\n🚀 IP-адрес: %s\n🎛 Нагрузка на сервер: %s\n\n", country.CountryName, idx+1, serv.IP, loadMsg)
+			mu.Unlock()
+		}(i, serv)
+	}
+	wg.Wait()
+
+	for _, line := range results {
+		msg += line
 	}
 	msg += "Получить ключ для сервера:"
 
-	buttons, layout := s.ss.ProcessServers(country, servers)
+	buttons, layout := s.ss.ProcessButtons(country, servers)
 	s.serversBtns = services.NewButtons(buttons, layout, "inline")
 
 	serversMapBtns := s.serversBtns.GetBtns()

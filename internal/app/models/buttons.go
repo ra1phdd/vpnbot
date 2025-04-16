@@ -56,10 +56,3 @@ var ListSubscriptions = []ButtonOption{
 		Display: "6 месяцев (749₽ | -17%)",
 	},
 }
-
-var ListServers = []ButtonOption{
-	{
-		Value:   "listservers",
-		Display: "Список серверов",
-	},
-}

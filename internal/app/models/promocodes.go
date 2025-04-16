@@ -2,19 +2,21 @@ package models
 
 import "time"
 
-type PromoCode struct {
-	ID                 int    `db:"id"`
-	Code               string `db:"code"`
-	Discount           int    `db:"discount"`
-	TotalActivations   *int   `db:"total_activations"`
-	CurrentActivations int    `db:"current_activations"`
-	OnlyNewUsers       bool   `db:"only_new_users"`
-	IsActive           bool   `db:"is_active"`
+type Promocode struct {
+	ID                 int    `gorm:"primaryKey;autoIncrement"`
+	Code               string `gorm:"size:15;unique;not null"`
+	Discount           int    `gorm:"not null"`
+	TotalActivations   *int
+	CurrentActivations int  `gorm:"default:0"`
+	OnlyNewUsers       bool `gorm:"default:false"`
+	IsActive           bool `gorm:"default:true"`
 }
 
-type PromoCodeActivation struct {
-	ID          int       `db:"id"`
-	PromoCodeID int       `db:"promocode_id"`
-	UserID      int64     `db:"user_id"`
-	ActivatedAt time.Time `db:"activated_at"`
+type PromocodeActivations struct {
+	ID          int `gorm:"primaryKey"`
+	PromocodeID int `gorm:"not null"`
+	Promocode   Promocode
+	UserID      int64 `gorm:"not null"`
+	User        User
+	ActivatedAt time.Time `gorm:"autoCreateTime"`
 }

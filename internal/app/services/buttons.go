@@ -13,12 +13,9 @@ type Buttons struct {
 }
 
 func NewButtons(buttons []models.ButtonOption, layout []int, typeKeyboard string) *Buttons {
-	var menu *telebot.ReplyMarkup
-	switch typeKeyboard {
-	case "reply":
+	menu := &telebot.ReplyMarkup{}
+	if typeKeyboard == "reply" {
 		menu = &telebot.ReplyMarkup{ResizeKeyboard: true, IsPersistent: true}
-	case "inline":
-		menu = &telebot.ReplyMarkup{}
 	}
 	rows, btns := createButtonRows(menu, buttons, layout, typeKeyboard)
 
@@ -62,17 +59,17 @@ func createButtonRows(menu *telebot.ReplyMarkup, buttons []models.ButtonOption, 
 	return rows, btns
 }
 
-func (b *Buttons) GetBtns() map[string]*telebot.Btn {
-	return b.btns
+func (bs *Buttons) GetBtns() map[string]*telebot.Btn {
+	return bs.btns
 }
 
-func (b *Buttons) AddBtns() *telebot.ReplyMarkup {
-	switch b.typeKeyboard {
+func (bs *Buttons) AddBtns() *telebot.ReplyMarkup {
+	switch bs.typeKeyboard {
 	case "reply":
-		b.menu.Reply(b.rows...)
+		bs.menu.Reply(bs.rows...)
 	case "inline":
-		b.menu.Inline(b.rows...)
+		bs.menu.Inline(bs.rows...)
 	}
 
-	return b.menu
+	return bs.menu
 }

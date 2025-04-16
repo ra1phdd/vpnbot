@@ -1,10 +1,8 @@
 package services
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
-	"go.uber.org/zap"
 	"net/url"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
@@ -14,24 +12,26 @@ import (
 )
 
 type Subscriptions struct {
-	sr *repository.Subscriptions
-	pr *repository.Payments
+	log *logger.Logger
+	sr  *repository.Subscriptions
 }
 
-func NewSubscriptions(sr *repository.Subscriptions) *Subscriptions {
+func NewSubscriptions(log *logger.Logger, sr *repository.Subscriptions) *Subscriptions {
 	return &Subscriptions{
-		sr: sr,
+		log: log,
+		sr:  sr,
 	}
 }
 
-func (s *Subscriptions) IsActive(userId int64) (bool, error) {
-	data, err := s.sr.GetLastByUserId(userId)
+func (ss *Subscriptions) IsActive(userId int64, isActive bool) (bool, error) {
+	data, err := ss.sr.GetLastByUserId(userId, isActive)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		logger.Error("Failed to receiving information about a valid user subscription", zap.Error(err))
+		ss.log.Error("Failed to receiving information about a valid user subscription", err)
 		return false, err
+	}
+
+	if data == (models.Subscription{}) {
+		return false, nil
 	}
 
 	if data.EndDate.After(time.Now().UTC()) && data.IsActive {
@@ -40,28 +40,57 @@ func (s *Subscriptions) IsActive(userId int64) (bool, error) {
 	return false, nil
 }
 
-func (s *Subscriptions) Add(sub models.Subscription) (int, error) {
+func (ss *Subscriptions) GetAllByUserId(userId int64) ([]models.Subscription, error) {
+	if userId == 0 {
+		return nil, errors.New("userId is empty")
+	}
+
+	return ss.sr.GetAllByUserId(userId)
+}
+
+func (ss *Subscriptions) GetLastByUserId(userId int64, isActive bool) (models.Subscription, error) {
+	if userId == 0 {
+		return models.Subscription{}, errors.New("userId is empty")
+	}
+
+	return ss.sr.GetLastByUserId(userId, isActive)
+}
+
+func (ss *Subscriptions) Add(sub models.Subscription) (int, error) {
 	if sub.UserID == 0 {
-		return 0, fmt.Errorf("user id is empty")
+		return 0, errors.New("userId is empty")
 	}
 
-	return s.sr.Add(sub)
+	return ss.sr.Add(sub)
 }
 
-func (s *Subscriptions) UpdateIsActive(userId int64, payload string, isActive bool) error {
-	payment, err := s.pr.Get(userId, payload)
-	if err != nil {
-		logger.Error("Failed to get payment", zap.Error(err))
-		return err
+func (ss *Subscriptions) UpdateEndDate(subId int, userId int64, endDate time.Time) error {
+	if subId <= 0 || userId == 0 {
+		return errors.New("subId or userId is empty")
+	}
+	if endDate.Before(time.Now()) {
+		return errors.New("endDate is invalid")
 	}
 
-	return s.sr.UpdateIsActive(payment.SubscriptionID, isActive)
+	return ss.sr.UpdateEndDate(subId, userId, endDate)
 }
 
-func (s *Subscriptions) GetVlessKey(uuid string, server models.Server, countryCode string) string {
+func (ss *Subscriptions) UpdateIsActive(subId int, userId int64, isActive bool) error {
+	if subId <= 0 || userId == 0 {
+		return errors.New("subId or userId is empty")
+	}
+
+	return ss.sr.UpdateIsActive(subId, userId, isActive)
+}
+
+func (ss *Subscriptions) Delete(subId int, userId int64) error {
+	if subId <= 0 || userId == 0 {
+		return errors.New("subId or userId is empty")
+	}
+
+	return ss.sr.Delete(subId, userId)
+}
+
+func (ss *Subscriptions) GetVlessKey(uuid string, server models.Server, countryCode string) string {
 	return fmt.Sprintf("vless://%s@%s:443/?type=tcp&security=reality&pbk=%s&fp=random&sni=%s&sid=%s&spx=%s#nsvpn-%s", uuid, server.IP, server.PublicKey, strings.TrimSuffix(server.Dest, ":443"), server.ShortIDs, url.QueryEscape("/"), countryCode)
-}
-
-func (s *Subscriptions) GetLastByUserId(userId int64) (sub models.Subscription, err error) {
-	return s.sr.GetLastByUserId(userId)
 }

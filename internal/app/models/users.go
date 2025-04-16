@@ -1,17 +1,17 @@
 package models
 
 type User struct {
-	ID        int64  `db:"id"`
-	Username  string `db:"username"`
-	Firstname string `db:"firstname"`
-	Lastname  string `db:"lastname"`
-	PartnerID *int   `db:"partner_id"`
-	IsAdmin   bool   `db:"is_admin"`
-	IsSign    bool   `db:"is_sign"`
+	ID        int64    `gorm:"primaryKey"`
+	Username  string   `gorm:"size:32"`
+	Firstname string   `gorm:"size:64"`
+	Lastname  string   `gorm:"size:64"`
+	PartnerID *int     `gorm:"index"`
+	Partner   *Partner `gorm:"foreignKey:PartnerID"`
+	IsAdmin   bool     `gorm:"default:false"`
+	IsSign    bool     `gorm:"default:false"`
 }
 
 type Partner struct {
-	ID           int    `db:"id"`
-	UserID       int64  `db:"user_id"`
-	ReferralCode string `db:"referral_code"`
+	ID           int    `gorm:"primaryKey"`
+	ReferralCode string `gorm:"size:32;unique;not null"`
 }
