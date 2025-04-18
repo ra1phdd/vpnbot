@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
-	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"gopkg.in/telebot.v4"
@@ -31,12 +29,12 @@ func (k *Keys) GetKeyHandler(c telebot.Context, server models.Server, countryNam
 	email := fmt.Sprintf("%d-%s", c.Sender().ID, strings.ToLower(btnUnique))
 
 	key, err := k.ks.Get(server.ID, c.Sender().ID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil {
 		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
 	var uuidStr string
-	if errors.Is(err, sql.ErrNoRows) {
+	if key == (models.Key{}) {
 		u, err := uuid.NewUUID()
 		if err != nil {
 			return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
@@ -61,7 +59,7 @@ func (k *Keys) GetKeyHandler(c telebot.Context, server models.Server, countryNam
 	}
 
 	sa := api.NewServer(server)
-	found, err := sa.IsFoundRequest(uuidStr, email)
+	found, err := sa.IsFoundRequest(uuidStr)
 	if err != nil {
 		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}

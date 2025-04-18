@@ -15,7 +15,7 @@ var AcceptOfferButton = []ButtonOption{
 var ClientButtons = []ButtonOption{
 	{
 		Value:   "attachvpn",
-		Display: "📡 Подключить VPN",
+		Display: "Подключить VPN",
 	},
 	{
 		Value:   "profile",

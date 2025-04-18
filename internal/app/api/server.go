@@ -27,13 +27,11 @@ func NewServer(server models.Server) *ServerAPI {
 	return sa
 }
 
-func (sa *ServerAPI) IsFoundRequest(uuid, email string) (bool, error) {
-	endpoint := fmt.Sprintf("http://%s:%d/v1/client/is_found", sa.server.IP, sa.server.Port)
+func (sa *ServerAPI) IsFoundRequest(uuid string) (bool, error) {
+	endpoint := fmt.Sprintf("http://%s:%d/v1/clients/%s/is_found", sa.server.IP, sa.server.Port, uuid)
 	params := url.Values{}
-	params.Add("uuid", uuid)
-	params.Add("email", email)
 
-	result, err := sa.serverRequest(endpoint, params)
+	result, err := sa.serverRequest("GET", endpoint, params)
 	if err != nil {
 		return false, err
 	}
@@ -45,13 +43,13 @@ func (sa *ServerAPI) IsFoundRequest(uuid, email string) (bool, error) {
 }
 
 func (sa *ServerAPI) AddRequest(uuid, email string, expiresAt time.Time) error {
-	endpoint := fmt.Sprintf("http://%s:%d/v1/client/add", sa.server.IP, sa.server.Port)
+	endpoint := fmt.Sprintf("http://%s:%d/v1/clients", sa.server.IP, sa.server.Port)
 	params := url.Values{}
 	params.Add("uuid", uuid)
 	params.Add("email", email)
 	params.Add("expires_at", expiresAt.Format(time.RFC3339))
 
-	result, err := sa.serverRequest(endpoint, params)
+	result, err := sa.serverRequest("POST", endpoint, params)
 	if err != nil {
 		return err
 	}
@@ -64,7 +62,7 @@ func (sa *ServerAPI) AddRequest(uuid, email string, expiresAt time.Time) error {
 
 func (sa *ServerAPI) GetLoadRequest() (float64, error) {
 	endpoint := fmt.Sprintf("http://%s:%d/v1/server/get_load", sa.server.IP, sa.server.Port)
-	result, err := sa.serverRequest(endpoint, url.Values{})
+	result, err := sa.serverRequest("GET", endpoint, url.Values{})
 	if err != nil {
 		return 0, err
 	}
@@ -75,20 +73,21 @@ func (sa *ServerAPI) GetLoadRequest() (float64, error) {
 	return 0, nil
 }
 
-func (sa *ServerAPI) serverRequest(endpoint string, params url.Values) (map[string]interface{}, error) {
+func (sa *ServerAPI) serverRequest(method, endpoint string, params url.Values) (map[string]interface{}, error) {
 	uri := endpoint
 	if params.Encode() != "" {
 		uri = endpoint + "?" + params.Encode()
 	}
 
-	req, err := http.NewRequest("GET", uri, nil)
+	req, err := http.NewRequest(method, uri, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Accept", "*/*")
 	req.Header.Set("X-AUTH-KEY", hex.EncodeToString(sa.authKey[:]))
 
 	client := &http.Client{
-		Timeout: 1 * time.Second,
+		Timeout: 2 * time.Second,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
