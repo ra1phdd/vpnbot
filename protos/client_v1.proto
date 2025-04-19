@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package client.v1;
+
+option go_package = "pkg/client/v1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+service ClientService {
+  rpc ClientExists(ClientExistsRequest) returns (ClientExistsResponse);
+  rpc GetClient(GetClientRequest) returns (ClientResponse);
+  rpc ListClients(google.protobuf.Empty) returns (ListClientsResponse);
+  rpc CreateClient(CreateClientRequest) returns (ClientResponse);
+  rpc UpdateClient(UpdateClientRequest) returns (ClientResponse);
+  rpc DeleteClient(DeleteClientRequest) returns (google.protobuf.Empty);
+
+  rpc GetClientStatus(GetClientStatusRequest) returns (ClientStatusResponse);
+  rpc ListClientsStatus(google.protobuf.Empty) returns (ListClientsStatusResponse);
+
+  rpc GetClientTraffic(GetClientTrafficRequest) returns (ClientTrafficResponse);
+  rpc ListClientsTraffic(google.protobuf.Empty) returns (ListClientsTrafficResponse);
+}
+
+// Requests and Responses
+message ClientExistsRequest {
+  string uuid = 1;
+}
+
+message ClientExistsResponse {
+  bool exists = 1;
+}
+
+message GetClientRequest {
+  string uuid = 1;
+}
+
+message ClientResponse {
+  Client client = 1;
+}
+
+message ListClientsResponse {
+  repeated Client clients = 1;
+}
+
+message CreateClientRequest {
+  string uuid = 1;
+  string email = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message UpdateClientRequest {
+  string uuid = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message DeleteClientRequest {
+  string uuid = 1;
+}
+
+// Status messages
+message GetClientStatusRequest {
+  string uuid = 1;
+}
+
+message ClientStatusResponse {
+  bool online = 1;
+}
+
+message ListClientsStatusResponse {
+  repeated ClientStatus statuses = 1;
+}
+
+// Traffic messages
+message GetClientTrafficRequest {
+  string uuid = 1;
+}
+
+message ClientTrafficResponse {
+  Traffic traffic = 1;
+}
+
+message ListClientsTrafficResponse {
+  repeated ClientTraffic client_traffics = 1;
+}
+
+// Data models
+message Client {
+  string uuid = 1;
+  string email = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  uint64 id = 4;
+}
+
+message Traffic {
+  uint64 uplink = 1;
+  uint64 downlink = 2;
+  google.protobuf.Timestamp last_updated = 3;
+}
+
+message ClientTraffic {
+  string uuid = 1;
+  string email = 2;
+  Traffic traffic = 3;
+}
+
+message ClientStatus {
+  string uuid = 1;
+  string email = 2;
+  bool online = 3;
+}

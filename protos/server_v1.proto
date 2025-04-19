@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option go_package = "pkg/server/v1";
+
+package server.v1;
+
+service ServerService {
+  rpc GetLoad (ServerRequest) returns (LoadResponse) {}
+  rpc GetHealth (ServerRequest) returns (HealthResponse) {}
+}
+
+message ServerRequest {}
+
+message LoadResponse {
+  double load_score = 1;
+}
+
+message HealthResponse {
+  string status = 1;
+}

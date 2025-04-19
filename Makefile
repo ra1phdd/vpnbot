@@ -1,4 +1,4 @@
-.PHONY: test cover build
+.PHONY: test cover build protos
 
 # Переменные
 BUILD_DIR := build
@@ -11,6 +11,10 @@ cover:
 	go test -short -race -count 1 -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 	rm coverage.out
+
+protos:
+	protoc --go_out=. --go-grpc_out=. protos/server_v1.proto
+	protoc --go_out=. --go-grpc_out=. protos/client_v1.proto
 
 # Сборка
 build:

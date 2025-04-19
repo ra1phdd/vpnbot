@@ -26,10 +26,11 @@ func NewKeys(log *logger.Logger, ks *services.Keys, ss *services.Subscriptions) 
 }
 
 func (k *Keys) GetKeyHandler(c telebot.Context, server models.Server, countryName string, btnUnique string) error {
-	email := fmt.Sprintf("%d-%s", c.Sender().ID, strings.ToLower(btnUnique))
+	email := fmt.Sprintf("nsvpn-%d-%s", c.Sender().ID, strings.ToLower(btnUnique))
 
 	key, err := k.ks.Get(server.ID, c.Sender().ID)
 	if err != nil {
+		k.log.Error("Failed get key", err)
 		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
@@ -37,6 +38,7 @@ func (k *Keys) GetKeyHandler(c telebot.Context, server models.Server, countryNam
 	if key == (models.Key{}) {
 		u, err := uuid.NewUUID()
 		if err != nil {
+			k.log.Error("Failed get uuid", err)
 			return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 		}
 
@@ -52,25 +54,29 @@ func (k *Keys) GetKeyHandler(c telebot.Context, server models.Server, countryNam
 		}
 
 		if err := k.ks.Add(data); err != nil {
+			k.log.Error("Failed add key", err)
 			return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 		}
 	} else {
 		uuidStr = key.UUID
 	}
 
-	sa := api.NewServer(server)
+	sa := api.NewAPI(k.log, server)
 	found, err := sa.IsFoundRequest(uuidStr)
 	if err != nil {
+		k.log.Error("Failed check if request", err)
 		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
 	if !found {
 		sub, err := k.ss.GetLastByUserId(c.Sender().ID, true)
 		if err != nil {
+			k.log.Error("Failed get last sub", err)
 			return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 		}
 
 		if err := sa.AddRequest(uuidStr, email, *sub.EndDate); err != nil {
+			k.log.Error("Failed add request", err)
 			return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 		}
 	}

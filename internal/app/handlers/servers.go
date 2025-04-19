@@ -84,7 +84,7 @@ func (s *Servers) InfoHandler(c telebot.Context, country models.Country) error {
 			defer wg.Done()
 
 			var loadMsg string
-			sa := api.NewServer(serv)
+			sa := api.NewAPI(s.log, serv)
 			load, err := sa.GetLoadRequest()
 			if err != nil {
 				loadMsg = "не отвечает 🔴"
