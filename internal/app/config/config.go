@@ -1,16 +1,17 @@
 package config
 
 import (
+	"log"
+
 	"github.com/caarlos0/env"
 	"github.com/joho/godotenv"
-	"log"
 )
 
 type Configuration struct {
 	TelegramAPI string `env:"TELEGRAM_API,required"`
-	LoggerLevel string `env:"LOGGER_LEVEL" envDefault:"warn"`
+	LoggerLevel string `env:"LOGGER_LEVEL" envDefault:"info"`
 	GinMode     string `env:"GIN_MODE" envDefault:"release"`
-	Port        int    `env:"PORT" envDefault:"3000"`
+	PortAPI     int    `env:"PORT_API" envDefault:"8890"`
 	DB          DB
 	Redis       Redis
 }

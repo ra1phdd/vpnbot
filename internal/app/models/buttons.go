@@ -41,18 +41,3 @@ var ClientButtonsWithSub = []ButtonOption{
 		Display: "Информация",
 	},
 }
-
-var ListSubscriptions = []ButtonOption{
-	{
-		Value:   "sub_one_month",
-		Display: "1 месяц (149₽)",
-	},
-	{
-		Value:   "sub_three_month",
-		Display: "3 месяца (399₽ | -11%)",
-	},
-	{
-		Value:   "sub_six_month",
-		Display: "6 месяцев (749₽ | -17%)",
-	},
-}

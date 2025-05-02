@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"fmt"
+	"go.uber.org/atomic"
 	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/api"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
 	"nsvpn/pkg/logger"
+	"strings"
 	"sync"
 )
 
@@ -14,13 +16,14 @@ type Servers struct {
 	log           *logger.Logger
 	bot           *telebot.Bot
 	kh            *Keys
+	subs          *services.Subscriptions
 	ss            *services.Servers
 	cs            *services.Country
 	countriesBtns *services.Buttons
-	serversBtns   *services.Buttons
+	api           *api.API
 }
 
-func NewServers(log *logger.Logger, bot *telebot.Bot, ss *services.Servers, kh *Keys, cs *services.Country) *Servers {
+func NewServers(log *logger.Logger, bot *telebot.Bot, subs *services.Subscriptions, ss *services.Servers, kh *Keys, cs *services.Country, api *api.API) *Servers {
 	countries, err := cs.GetAll()
 	if err != nil {
 		log.Error("Failed to get countries from db", err)
@@ -28,15 +31,17 @@ func NewServers(log *logger.Logger, bot *telebot.Bot, ss *services.Servers, kh *
 	}
 
 	buttons, layout := cs.ProcessButtons(countries)
-	countriesBtns := services.NewButtons(buttons, layout, "reply")
+	countriesBtns := services.NewButtons(buttons, layout, "inline")
 
 	s := &Servers{
 		log:           log,
 		bot:           bot,
 		kh:            kh,
+		subs:          subs,
 		ss:            ss,
 		cs:            cs,
 		countriesBtns: countriesBtns,
+		api:           api,
 	}
 
 	countriesMapBtns := countriesBtns.GetBtns()
@@ -48,94 +53,76 @@ func NewServers(log *logger.Logger, bot *telebot.Bot, ss *services.Servers, kh *
 }
 
 func (s *Servers) ListCountriesHandler(c telebot.Context) error {
+	if isActive, _ := s.subs.IsActive(c.Sender().ID, true); !isActive {
+		return c.Send("У вас нет прав для выполнения данной команды")
+	}
+
 	return c.Send("Список доступных стран", s.countriesBtns.AddBtns())
 }
 
 func (s *Servers) CountryHandler(c telebot.Context) error {
-	btns := s.countriesBtns.GetBtns()
-	for i, btn := range btns {
-		if btn.Text == c.Text() {
-			country := models.Country{
-				CountryCode: i,
-				CountryName: btn.Text,
-			}
-
-			return s.InfoHandler(c, country)
-		}
+	country, err := s.cs.Get(c.Callback().Unique)
+	if err != nil {
+		return err
 	}
 
-	return fmt.Errorf("country not found")
+	return s.InfoHandler(c, country)
 }
 
-func (s *Servers) InfoHandler(c telebot.Context, country models.Country) error {
-	servers, err := s.ss.GetByCC(country.CountryCode)
+func (s *Servers) InfoHandler(c telebot.Context, country *models.Country) error {
+	if isActive, _ := s.subs.IsActive(c.Sender().ID, true); !isActive {
+		return c.Send("У вас нет прав для выполнения данной команды")
+	}
+
+	servers, err := s.ss.GetAllByCountryID(country.ID)
 	if err != nil {
 		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
 	}
 
-	var msg string
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	results := make([]string, len(servers))
-
-	for i, serv := range servers {
+	var sumLoad atomic.Float64
+	var inActive atomic.Int64
+	for _, serv := range servers {
 		wg.Add(1)
-		go func(idx int, serv models.Server) {
+		go func(server *models.Server) {
 			defer wg.Done()
 
-			var loadMsg string
-			sa := api.NewAPI(s.log, serv)
-			load, err := sa.GetLoadRequest()
+			load, err := s.api.GetLoadRequest(server)
 			if err != nil {
-				loadMsg = "не отвечает 🔴"
-			} else {
-				switch {
-				case load <= 0.3:
-					loadMsg = "низкая 🟢"
-				case load > 0.3 && load <= 0.7:
-					loadMsg = "средняя 🌕"
-				case load > 0.7 && load <= 0.95:
-					loadMsg = "высокая 🟠"
-				case load > 0.95:
-					loadMsg = "критическая 🔴"
-				}
+				inActive.Add(1)
 			}
-
-			mu.Lock()
-			results[idx] = fmt.Sprintf("%s-%d\n🚀 IP-адрес: %s\n🎛 Нагрузка на сервер: %s\n\n", country.CountryName, idx+1, serv.IP, loadMsg)
-			mu.Unlock()
-		}(i, serv)
+			sumLoad.Add(load)
+		}(serv)
 	}
 	wg.Wait()
 
-	for _, line := range results {
-		msg += line
-	}
-	msg += "Получить ключ для сервера:"
-
-	buttons, layout := s.ss.ProcessButtons(country, servers)
-	s.serversBtns = services.NewButtons(buttons, layout, "inline")
-
-	serversMapBtns := s.serversBtns.GetBtns()
-	i := 0
-	for _, btn := range serversMapBtns {
-		server := servers[i]
-		s.bot.Handle(btn, func(c telebot.Context) error {
-			return s.ServerHandler(c, server, btn.Text)
-		})
-		i++
-	}
-
-	return c.Send(msg, s.serversBtns.AddBtns())
-}
-
-func (s *Servers) ServerHandler(c telebot.Context, server models.Server, countryName string) error {
-	btns := s.serversBtns.GetBtns()
-	for _, btn := range btns {
-		if btn.Text == countryName {
-			return s.kh.GetKeyHandler(c, server, countryName, btn.Unique)
+	var loadMsg string
+	if int64(len(servers)) == inActive.Load() {
+		loadMsg = "не отвечает 🔴"
+	} else {
+		load := sumLoad.Load() / (float64(len(servers)) - float64(inActive.Load()))
+		switch {
+		case load <= 0.3:
+			loadMsg = "низкая 🟢"
+		case load > 0.3 && load <= 0.7:
+			loadMsg = "средняя 🌕"
+		case load > 0.7 && load <= 0.95:
+			loadMsg = "высокая 🟠"
+		case load > 0.95:
+			loadMsg = "критическая 🔴"
 		}
 	}
+	msg := fmt.Sprintf("%s %s\n🎛 Нагрузка на сервер: %s\n\n", country.Emoji, country.Code, loadMsg)
 
-	return fmt.Errorf("server not found")
+	getKeyBtn := services.NewButtons([]models.ButtonOption{{
+		Value:   "get_key_" + strings.ToLower(country.Code),
+		Display: "📥 Получить ключ",
+	}}, []int{1}, "inline")
+	for _, btn := range getKeyBtn.GetBtns() {
+		s.bot.Handle(btn, func(c telebot.Context) error {
+			return s.kh.GetKeyHandler(c, country)
+		})
+	}
+
+	return c.Edit(msg, getKeyBtn.AddBtns())
 }

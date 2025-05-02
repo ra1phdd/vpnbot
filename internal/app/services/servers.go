@@ -1,11 +1,12 @@
 package services
 
 import (
-	"errors"
 	"fmt"
+	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
 	"nsvpn/pkg/logger"
+	"strings"
 )
 
 type Servers struct {
@@ -20,13 +21,57 @@ func NewServers(log *logger.Logger, sr *repository.Servers) *Servers {
 	}
 }
 
-func (ss *Servers) ProcessButtons(country models.Country, servers []models.Server) ([]models.ButtonOption, []int) {
-	var listServers []models.ButtonOption
+func (ss *Servers) GetAll() (servers []*models.Server, err error) {
+	return ss.sr.GetAll()
+}
 
-	for i := range servers {
+func (ss *Servers) GetAllByCountryID(countryID int) (servers []*models.Server, err error) {
+	if countryID == 0 {
+		return nil, constants.ErrEmptyFields
+	}
+
+	return ss.sr.GetAllByCountryID(countryID)
+}
+
+func (ss *Servers) Get(id int) (server *models.Server, err error) {
+	if id == 0 {
+		return nil, constants.ErrEmptyFields
+	}
+
+	return ss.sr.Get(id)
+}
+
+func (ss *Servers) Add(server *models.Server) error {
+	if server.IP == "" || server.CountryID == 0 || server.ChannelSpeed == 0 || server.Port == 0 {
+		return constants.ErrEmptyFields
+	}
+
+	return ss.sr.Add(server)
+}
+
+func (ss *Servers) Update(id int, newServer *models.Server) error {
+	if id == 0 || newServer.IP == "" || newServer.CountryID == 0 || newServer.ChannelSpeed == 0 || newServer.Port == 0 {
+		return constants.ErrEmptyFields
+	}
+
+	return ss.sr.Update(id, newServer)
+}
+
+func (ss *Servers) Delete(id int) error {
+	if id == 0 {
+		return constants.ErrEmptyFields
+	}
+
+	return ss.sr.Delete(id)
+}
+
+func (ss *Servers) ProcessButtons(servers []models.Server) ([]models.ButtonOption, []int) {
+	listServers := make([]models.ButtonOption, 0, len(servers))
+
+	for i, server := range servers {
 		listServers = append(listServers, models.ButtonOption{
-			Value:   fmt.Sprintf("%s-%d", country.CountryCode, i+1),
-			Display: fmt.Sprintf("%s-%d", country.CountryName, i+1),
+			Value:   fmt.Sprintf("server_%s-%d", strings.ToLower(server.Country.Code), i+1),
+			Display: fmt.Sprintf("%s %s-%d", server.Country.Emoji, server.Country.Code, i+1),
 		})
 	}
 
@@ -43,50 +88,4 @@ func (ss *Servers) ProcessButtons(country models.Country, servers []models.Serve
 	}
 
 	return listServers, groups
-}
-
-func (ss *Servers) GetAll() ([]models.Server, error) {
-	return ss.sr.GetAll()
-}
-
-func (ss *Servers) GetById(id int) (models.Server, error) {
-	if id == 0 {
-		return models.Server{}, errors.New("id is empty")
-	}
-
-	return ss.sr.GetById(id)
-}
-
-func (ss *Servers) GetByIP(ip string) (models.Server, error) {
-	if ip == "" {
-		return models.Server{}, errors.New("ip is empty")
-	}
-
-	return ss.sr.GetByIP(ip)
-}
-
-func (ss *Servers) GetByCC(countryCode string) ([]models.Server, error) {
-	if countryCode == "" {
-		return nil, errors.New("countryCode is empty")
-	}
-
-	return ss.sr.GetByСС(countryCode)
-}
-
-func (ss *Servers) Add(server models.Server) error {
-	if server.IP == "" || server.CountryID == 0 || server.ChannelSpeed == 0 || server.PrivateKey == "" ||
-		server.PublicKey == "" || server.Dest == "" || server.ServerNames == "" || server.ShortIDs == "" ||
-		server.Port == 0 {
-		return errors.New("server field is empty")
-	}
-
-	return ss.sr.Add(server)
-}
-
-func (ss *Servers) Delete(id int) error {
-	if id == 0 {
-		return errors.New("id is empty")
-	}
-
-	return ss.sr.Delete(id)
 }

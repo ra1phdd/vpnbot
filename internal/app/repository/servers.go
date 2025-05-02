@@ -1,14 +1,12 @@
 package repository
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
-	"nsvpn/internal/app/constants"
+	"log/slog"
 	"nsvpn/internal/app/models"
+	"nsvpn/pkg/cache"
 	"nsvpn/pkg/logger"
 	"time"
 )
@@ -16,10 +14,10 @@ import (
 type Servers struct {
 	log   *logger.Logger
 	db    *gorm.DB
-	cache *redis.Client
+	cache *cache.Cache
 }
 
-func NewServers(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Servers {
+func NewServers(log *logger.Logger, db *gorm.DB, cache *cache.Cache) *Servers {
 	return &Servers{
 		log:   log,
 		db:    db,
@@ -27,296 +25,136 @@ func NewServers(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Servers {
 	}
 }
 
-func (sr *Servers) GetAll() ([]models.Server, error) {
+func (sr *Servers) GetAll() (servers []*models.Server, err error) {
 	cacheKey := "servers:all"
-	cacheValue, err := sr.cache.Get(context.Background(), cacheKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		sr.log.Error("error getting data from cache", err)
-		return nil, err
-	}
-
-	var servers []models.Server
-	if cacheValue != "" {
-		if err := json.Unmarshal([]byte(cacheValue), &servers); err != nil {
-			sr.log.Error("error unmarshaling JSON", err)
-			return nil, err
-		}
+	if err = sr.cache.Get(cacheKey, servers); err == nil {
+		sr.log.Debug("Returning servers from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(servers)))
 		return servers, nil
 	}
 
-	if err := sr.db.Find(&servers).Error; err != nil {
+	if err = sr.db.Find(&servers).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			sr.log.Debug("No servers found in database")
 			return nil, nil
 		}
 
-		sr.log.Error("error fetching servers from DB", err)
+		sr.log.Error("Failed to get data from db", err)
 		return nil, err
 	}
 
-	jsonData, err := json.Marshal(servers)
-	if err != nil {
-		sr.log.Error("error marshaling servers", err)
-		return nil, err
-	}
-	if err := sr.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
-		sr.log.Error("error setting cache", err)
-		return nil, err
-	}
-
+	sr.cache.Set(cacheKey, servers, 15*time.Minute)
+	sr.log.Debug("Returning servers from db", slog.String("cache_key", cacheKey), slog.Int("count", len(servers)))
 	return servers, nil
 }
 
-func (sr *Servers) GetById(id int) (models.Server, error) {
+func (sr *Servers) GetAllByCountryID(countryID int) (servers []*models.Server, err error) {
+	cacheKey := fmt.Sprintf("servers:country_id:%d", countryID)
+	if err = sr.cache.Get(cacheKey, servers); err == nil {
+		sr.log.Debug("Returning servers from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(servers)))
+		return servers, nil
+	}
+
+	if err = sr.db.Preload("Country").Where("country_id = ?", countryID).Find(&servers).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			sr.log.Debug("No servers found in database", slog.Int("countryID", countryID))
+			return nil, nil
+		}
+
+		sr.log.Error("Failed to get data from db", err)
+		return nil, err
+	}
+
+	sr.cache.Set(cacheKey, servers, 15*time.Minute)
+	sr.log.Debug("Returning servers from db", slog.String("cache_key", cacheKey), slog.Int("count", len(servers)))
+	return servers, nil
+}
+
+func (sr *Servers) Get(id int) (server *models.Server, err error) {
 	cacheKey := fmt.Sprintf("servers:id:%d", id)
-	cacheValue, err := sr.cache.Get(context.Background(), cacheKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		sr.log.Error("error getting data from cache", err)
-		return models.Server{}, err
-	}
-
-	var server models.Server
-	if cacheValue != "" {
-		if err := json.Unmarshal([]byte(cacheValue), &server); err != nil {
-			sr.log.Error("error unmarshaling server", err)
-			return models.Server{}, err
-		}
+	if err = sr.cache.Get(cacheKey, server); err == nil {
+		sr.log.Debug("Returning server from cache", slog.String("cache_key", cacheKey), slog.Int("id", id))
 		return server, nil
 	}
 
-	if err := sr.db.First(&server, id).Error; err != nil {
+	if err = sr.db.First(server, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return models.Server{}, nil
-		}
-
-		sr.log.Error("error fetching server from DB", err)
-		return models.Server{}, err
-	}
-
-	jsonData, err := json.Marshal(server)
-	if err != nil {
-		sr.log.Error("error marshaling server", err)
-		return models.Server{}, err
-	}
-	if err := sr.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
-		sr.log.Error("error setting cache", err)
-		return models.Server{}, err
-	}
-
-	return server, nil
-}
-
-func (sr *Servers) GetByIP(ip string) (models.Server, error) {
-	cacheKey := fmt.Sprintf("servers:ip:%s", ip)
-	cacheValue, err := sr.cache.Get(context.Background(), cacheKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		sr.log.Error("error getting data from cache", err)
-		return models.Server{}, err
-	}
-
-	var server models.Server
-	if cacheValue != "" {
-		if err := json.Unmarshal([]byte(cacheValue), &server); err != nil {
-			sr.log.Error("error unmarshaling server", err)
-			return models.Server{}, err
-		}
-		return server, nil
-	}
-
-	if err := sr.db.Where("ip = ?", ip).First(&server).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return models.Server{}, nil
-		}
-
-		sr.log.Error("error fetching server from DB", err)
-		return models.Server{}, err
-	}
-
-	jsonData, err := json.Marshal(server)
-	if err != nil {
-		sr.log.Error("error marshaling server", err)
-		return models.Server{}, err
-	}
-	if err := sr.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
-		sr.log.Error("error setting cache", err)
-		return models.Server{}, err
-	}
-
-	return server, nil
-}
-
-func (sr *Servers) GetByСС(countryCode string) ([]models.Server, error) {
-	cacheKey := fmt.Sprintf("servers:country_code:%s", countryCode)
-	cacheValue, err := sr.cache.Get(context.Background(), cacheKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		sr.log.Error("error getting data from cache", err)
-		return nil, err
-	}
-
-	var servers []models.Server
-	if cacheValue != "" {
-		if err := json.Unmarshal([]byte(cacheValue), &servers); err != nil {
-			sr.log.Error("error unmarshaling servers", err)
-			return nil, err
-		}
-		return servers, nil
-	}
-
-	if err := sr.db.Joins("JOIN countries ON countries.id = servers.country_id").Where("countries.country_code = ?", countryCode).Find(&servers).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+			sr.log.Debug("Server not found in database", slog.Int("id", id))
 			return nil, nil
 		}
 
-		sr.log.Error("error fetching servers from DB", err)
+		sr.log.Error("Failed to get data from db", err)
 		return nil, err
 	}
 
-	jsonData, err := json.Marshal(servers)
-	if err != nil {
-		sr.log.Error("error marshaling servers", err)
-		return nil, err
-	}
-	if err := sr.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
-		sr.log.Error("error setting cache", err)
-		return nil, err
-	}
-
-	return servers, nil
+	sr.cache.Set(cacheKey, server, 15*time.Minute)
+	sr.log.Debug("Returning server from db", slog.Int("id", id))
+	return server, nil
 }
 
-func (sr *Servers) Add(server models.Server) error {
+func (sr *Servers) Add(server *models.Server) error {
 	if err := sr.db.Create(&server).Error; err != nil {
-		sr.log.Error("error adding server", err)
+		sr.log.Error("Failed to execute query from db", err, slog.Int("id", server.ID))
 		return err
 	}
+
+	sr.cache.Delete("servers:all")
+	sr.log.Debug("Added new server in db", slog.Int("id", server.ID))
 	return nil
 }
 
-func (sr *Servers) Update(id int, server models.Server) error {
-	serverOld, err := sr.GetById(id)
+func (sr *Servers) Update(id int, newServer *models.Server) error {
+	server, err := sr.Get(id)
 	if err != nil {
+		sr.log.Error("Failed to execute query from db", err, slog.Int("id", id))
 		return err
 	}
 
 	tx := sr.db.Begin()
 	if tx.Error != nil {
-		sr.log.Error("error starting transaction", tx.Error)
+		sr.log.Error("Failed to begin transaction", tx.Error)
 		return tx.Error
 	}
 
-	if server.IP != "" && server.IP != serverOld.IP {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("ip", server.IP).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating IP", err)
-			return err
-		}
+	if err = updateField(sr.log, tx, server, "ip", server.IP, newServer.IP); err != nil {
+		tx.Rollback()
+		return err
 	}
-
-	if server.Port != 0 && server.Port != serverOld.Port {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("port", server.Port).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating port", err)
-			return err
-		}
+	if err = updateField(sr.log, tx, server, "port", server.Port, newServer.Port); err != nil {
+		tx.Rollback()
+		return err
 	}
-
-	if server.CountryID != 0 && server.CountryID != serverOld.CountryID {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("country_id", server.CountryID).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating country_id", err)
-			return err
-		}
+	if err = updateField(sr.log, tx, server, "country_id", server.CountryID, newServer.CountryID); err != nil {
+		tx.Rollback()
+		return err
 	}
-
-	if server.ChannelSpeed != 0 && server.ChannelSpeed != serverOld.ChannelSpeed {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("channel_speed", server.ChannelSpeed).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating channel_speed", err)
-			return err
-		}
-	}
-
-	if server.PrivateKey != "" && server.PrivateKey != serverOld.PrivateKey {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("private_key", server.PrivateKey).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating private_key", err)
-			return err
-		}
-	}
-
-	if server.PublicKey != "" && server.PublicKey != serverOld.PublicKey {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("public_key", server.PublicKey).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating public_key", err)
-			return err
-		}
-	}
-
-	if server.Dest != "" && server.Dest != serverOld.Dest {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("dest", server.Dest).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating dest", err)
-			return err
-		}
-	}
-
-	if server.ServerNames != "" && server.ServerNames != serverOld.ServerNames {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("server_names", server.ServerNames).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating server_names", err)
-			return err
-		}
-	}
-
-	if server.ShortIDs != "" && server.ShortIDs != serverOld.ShortIDs {
-		if err := tx.Model(&serverOld).Where("id = ?", id).Update("short_ids", server.ShortIDs).Error; err != nil {
-			tx.Rollback()
-			sr.log.Error("error updating short_ids", err)
-			return err
-		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		sr.log.Error("error committing transaction", err)
+	if err = updateField(sr.log, tx, server, "channel_speed", server.ChannelSpeed, newServer.ChannelSpeed); err != nil {
+		tx.Rollback()
 		return err
 	}
 
-	cacheKeys := []string{
-		fmt.Sprintf("servers:id:%d", serverOld.ID),
-		fmt.Sprintf("servers:ip:%s", serverOld.IP),
-		fmt.Sprintf("servers:country_id:%d", serverOld.CountryID),
-	}
-	for _, key := range cacheKeys {
-		if err := sr.cache.Del(context.Background(), key).Err(); err != nil {
-			sr.log.Error(constants.ErrDeleteDataFromCache, err)
-			return err
-		}
+	if err = tx.Commit().Error; err != nil {
+		sr.log.Error("Failed to commit transaction", err)
+		return err
 	}
 
+	sr.cache.Delete("servers:all", fmt.Sprintf("servers:id:%d", id), fmt.Sprintf("servers:country_id:%d", server.CountryID))
+	sr.log.Debug("Successfully updated newServer", slog.Int("id", id))
 	return nil
 }
 
 func (sr *Servers) Delete(id int) error {
-	server, err := sr.GetById(id)
+	server, err := sr.Get(id)
 	if err != nil {
+		sr.log.Error("Failed to execute query from db", err, slog.Int("id", id))
 		return err
 	}
 
-	if err := sr.db.Delete(&models.Server{}, id).Error; err != nil {
-		sr.log.Error("error deleting server", err)
+	if err = sr.db.Delete(&models.Server{}, id).Error; err != nil {
+		sr.log.Error("Failed to delete server from db", err)
 		return err
 	}
 
-	cacheKeys := []string{
-		fmt.Sprintf("servers:id:%d", server.ID),
-		fmt.Sprintf("servers:ip:%s", server.IP),
-		fmt.Sprintf("servers:country_id:%d", server.CountryID),
-	}
-	for _, key := range cacheKeys {
-		if err := sr.cache.Del(context.Background(), key).Err(); err != nil {
-			sr.log.Error(constants.ErrDeleteDataFromCache, err)
-			return err
-		}
-	}
-
+	sr.cache.Delete("servers:all", fmt.Sprintf("servers:id:%d", id), fmt.Sprintf("servers:country_id:%d", server.CountryID))
+	sr.log.Debug("Deleted server from db", slog.Int("id", id))
 	return nil
 }

@@ -4,8 +4,8 @@ type Key struct {
 	ID           int   `gorm:"primaryKey;autoIncrement"`
 	UserID       int64 `gorm:"not null"`
 	User         User
-	ServerID     int `gorm:"not null"`
-	Server       Server
+	CountryID    int `gorm:"not null"`
+	Country      Country
 	UUID         string `gorm:"size:512;not null"`
 	SpeedLimit   int
 	TrafficLimit int64

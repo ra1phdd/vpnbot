@@ -23,9 +23,13 @@ func NewUsers(log *logger.Logger, ur *repository.Users, ss *services.Subscriptio
 
 func (u *Users) IsUser(next telebot.HandlerFunc) telebot.HandlerFunc {
 	return func(c telebot.Context) error {
-		data, err := u.ur.GetById(c.Sender().ID)
+		data, err := u.ur.Get(c.Sender().ID)
 		if err != nil {
 			u.log.Error("Error while fetching user", err)
+		}
+
+		if data == nil {
+			return next(c)
 		}
 
 		if data.Username != c.Sender().Username || data.Firstname != c.Sender().FirstName || data.Lastname != c.Sender().LastName {

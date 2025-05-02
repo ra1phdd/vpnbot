@@ -1,14 +1,13 @@
 package repository
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"log/slog"
+	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
+	"nsvpn/pkg/cache"
 	"nsvpn/pkg/logger"
 	"time"
 )
@@ -16,10 +15,10 @@ import (
 type Users struct {
 	log   *logger.Logger
 	db    *gorm.DB
-	cache *redis.Client
+	cache *cache.Cache
 }
 
-func NewUsers(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Users {
+func NewUsers(log *logger.Logger, db *gorm.DB, cache *cache.Cache) *Users {
 	return &Users{
 		log:   log,
 		db:    db,
@@ -27,58 +26,42 @@ func NewUsers(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Users {
 	}
 }
 
-func (ur *Users) GetById(id int64) (models.User, error) {
+func (ur *Users) Get(id int64) (user *models.User, err error) {
 	cacheKey := fmt.Sprintf("user:%d", id)
-	cacheValue, err := ur.cache.Get(context.Background(), cacheKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		ur.log.Error("Error getting user from cache", err, slog.Int64("id", id))
-		return models.User{}, err
-	}
-
-	var user models.User
-	if cacheValue != "" {
-		if err := json.Unmarshal([]byte(cacheValue), &user); err != nil {
-			ur.log.Error("Error unmarshaling user from cache", err, slog.Int64("id", id))
-			return models.User{}, err
-		}
+	if err = ur.cache.Get(cacheKey, user); err == nil {
+		ur.log.Debug("Returning user from cache", slog.String("cacheKey", cacheKey), slog.Int64("id", id))
 		return user, nil
 	}
 
-	if err := ur.db.First(&user, id).Error; err != nil {
+	if err = ur.db.First(&user, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return models.User{}, nil
+			ur.log.Debug("User not found in database", slog.Int64("id", id))
+			return nil, nil
 		}
 
-		ur.log.Error("Error getting user from DB", err, slog.Int64("id", id))
-		return models.User{}, err
+		ur.log.Error("Failed to get user from db", err, slog.Int64("id", id))
+		return nil, err
 	}
 
-	jsonData, err := json.Marshal(user)
-	if err != nil {
-		ur.log.Error("Error marshaling user to JSON", err, slog.Int64("id", id))
-		return models.User{}, err
-	}
-
-	if err := ur.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
-		ur.log.Error("Error setting user to cache", err, slog.Int64("id", id))
-		return models.User{}, err
-	}
-
+	ur.cache.Set(cacheKey, user, 15*time.Minute)
+	ur.log.Debug("Returning user from db", slog.Int64("id", id))
 	return user, nil
 }
 
-func (ur *Users) Add(user models.User) error {
+func (ur *Users) Add(user *models.User) error {
 	if err := ur.db.Create(&user).Error; err != nil {
-		ur.log.Error("Error inserting user into DB", err, slog.Any("user", user))
+		ur.log.Error("Failed to execute query from db", err, slog.Any("user", user))
 		return err
 	}
+
+	ur.log.Debug("Added new user in db", slog.Any("user", user))
 	return nil
 }
 
-func (ur *Users) Update(id int64, user models.User) error {
-	userOld, err := ur.GetById(id)
+func (ur *Users) Update(id int64, newUser *models.User) error {
+	user, err := ur.Get(id)
 	if err != nil {
-		ur.log.Error("Error getting existing user", err, slog.Any("user", user))
+		ur.log.Error("Error getting existing user", err, slog.Int64("id", id))
 		return err
 	}
 
@@ -88,44 +71,21 @@ func (ur *Users) Update(id int64, user models.User) error {
 		return tx.Error
 	}
 
-	if user.Username != "" && user.Username != userOld.Username {
-		if err := tx.Model(&userOld).Where("id = ?", id).Update("username", user.Username).Error; err != nil {
-			tx.Rollback()
-			ur.log.Error("Error updating username", err)
-			return err
-		}
+	if err = updateField(ur.log, tx, user, "username", user.Username, newUser.Username); err != nil {
+		tx.Rollback()
+		return err
 	}
-
-	if user.Firstname != "" && user.Firstname != userOld.Firstname {
-		if err := tx.Model(&userOld).Where("id = ?", id).Update("firstname", user.Firstname).Error; err != nil {
-			tx.Rollback()
-			ur.log.Error("Error updating firstname", err)
-			return err
-		}
+	if err = updateField(ur.log, tx, user, "firstname", user.Firstname, newUser.Firstname); err != nil {
+		tx.Rollback()
+		return err
 	}
-
-	if user.Lastname != "" && user.Lastname != userOld.Lastname {
-		if err := tx.Model(&userOld).Where("id = ?", id).Update("lastname", user.Lastname).Error; err != nil {
-			tx.Rollback()
-			ur.log.Error("Error updating lastname", err)
-			return err
-		}
+	if err = updateField(ur.log, tx, user, "lastname", user.Lastname, newUser.Lastname); err != nil {
+		tx.Rollback()
+		return err
 	}
-
-	if user.IsAdmin != userOld.IsAdmin {
-		if err := tx.Model(&userOld).Where("id = ?", id).Update("is_admin", user.IsAdmin).Error; err != nil {
-			tx.Rollback()
-			ur.log.Error("Error updating is_admin", err)
-			return err
-		}
-	}
-
-	if user.IsSign != userOld.IsSign {
-		if err := tx.Model(&userOld).Where("id = ?", id).Update("is_sign", user.IsSign).Error; err != nil {
-			tx.Rollback()
-			ur.log.Error("Error updating is_sign", err)
-			return err
-		}
+	if err = updateField(ur.log, tx, user, "balance", user.Balance, newUser.Balance); err != nil {
+		tx.Rollback()
+		return err
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -133,26 +93,87 @@ func (ur *Users) Update(id int64, user models.User) error {
 		return err
 	}
 
-	cacheKey := fmt.Sprintf("user:%d", id)
-	if err := ur.cache.Del(context.Background(), cacheKey).Err(); err != nil {
-		ur.log.Error("Error deleting user from cache", err)
+	ur.cache.Delete(fmt.Sprintf("user:%d", id))
+	ur.log.Debug("Successfully updated user", slog.Int64("id", id))
+	return nil
+}
+
+func (ur *Users) UpdateIsAdmin(id int64, isAdmin bool) error {
+	if err := ur.db.Model(&models.User{}).Where("id = ?", id).Update("is_admin", isAdmin).Error; err != nil {
+		ur.log.Error("Failed to update is_admin", err, slog.Int64("id", id), slog.Bool("isAdmin", isAdmin))
 		return err
 	}
 
+	ur.cache.Delete(fmt.Sprintf("user:%d", id))
+	ur.log.Debug("Successfully updated is_admin", slog.Int64("id", id), slog.Bool("isAdmin", isAdmin))
+	return nil
+}
+
+func (ur *Users) UpdateIsSign(id int64, isSign bool) error {
+	if err := ur.db.Model(&models.User{}).Where("id = ?", id).Update("is_sign", isSign).Error; err != nil {
+		ur.log.Error("Failed to update is_sign", err, slog.Int64("id", id), slog.Bool("isSign", isSign))
+		return err
+	}
+
+	ur.cache.Delete(fmt.Sprintf("user:%d", id))
+	ur.log.Debug("Successfully updated is_sign", slog.Int64("id", id), slog.Bool("isSign", isSign))
+	return nil
+}
+
+func (ur *Users) IncrementBalance(id int64, amount int) error {
+	result := ur.db.Model(&models.User{}).
+		Where("id = ?", id).
+		Update("balance", gorm.Expr("balance + ?", amount))
+	if result.Error != nil {
+		ur.log.Error("Failed to increment balance", result.Error, slog.Int64("id", id), slog.Int("amount", amount))
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return constants.ErrUserNotFound
+	}
+
+	ur.cache.Delete(fmt.Sprintf("user:%d", id))
+	ur.log.Debug("Incremented user balance", slog.Int64("id", id), slog.Int("amount", amount))
+	return nil
+}
+
+func (ur *Users) DecrementBalance(id int64, amount int) error {
+	result := ur.db.Model(&models.User{}).
+		Where("id = ? AND balance >= ?", id, amount).
+		Update("balance", gorm.Expr("balance - ?", amount))
+	if result.Error != nil {
+		ur.log.Error("Failed to decrement balance", result.Error, slog.Int64("id", id), slog.Int("amount", amount))
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		var exists bool
+		if err := ur.db.Model(&models.User{}).
+			Select("count(*) > 0").
+			Where("id = ?", id).
+			Find(&exists).Error; err != nil {
+			return err
+		}
+
+		if !exists {
+			return constants.ErrUserNotFound
+		}
+		return constants.ErrInsufficientFunds
+	}
+
+	ur.cache.Delete(fmt.Sprintf("user:%d", id))
+	ur.log.Debug("Decremented user balance", slog.Int64("id", id), slog.Int("amount", amount))
 	return nil
 }
 
 func (ur *Users) Delete(id int64) error {
 	if err := ur.db.Delete(&models.User{}, id).Error; err != nil {
-		ur.log.Error("Error deleting user from DB", err, slog.Int64("id", id))
+		ur.log.Error("Failed to delete user from db", err, slog.Int64("id", id))
 		return err
 	}
 
-	cacheKey := fmt.Sprintf("user:%d", id)
-	if err := ur.cache.Del(context.Background(), cacheKey).Err(); err != nil {
-		ur.log.Error("Error deleting user from cache", err, slog.Int64("id", id))
-		return err
-	}
-
+	ur.cache.Delete(fmt.Sprintf("user:%d", id))
+	ur.log.Debug("Deleted user from db", slog.Int64("id", id))
 	return nil
 }

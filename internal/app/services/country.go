@@ -1,7 +1,8 @@
 package services
 
 import (
-	"errors"
+	"fmt"
+	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
 	"nsvpn/pkg/logger"
@@ -19,20 +20,53 @@ func NewCountry(log *logger.Logger, cr *repository.Country) *Country {
 	}
 }
 
-func (cs *Country) ProcessButtons(countries []models.Country) ([]models.ButtonOption, []int) {
-	var listCountries []models.ButtonOption
+func (cs *Country) GetAll() (countries []*models.Country, err error) {
+	return cs.cr.GetAll()
+}
+
+func (cs *Country) Get(code string) (country *models.Country, err error) {
+	if code == "" {
+		return nil, constants.ErrEmptyFields
+	}
+
+	return cs.cr.Get(code)
+}
+
+func (cs *Country) Add(country *models.Country) (int, error) {
+	if country.Code == "" || country.Emoji == "" || country.NameRU == "" || country.NameEN == "" ||
+		country.Domain == "" || country.PrivateKey == "" || country.PublicKey == "" || country.Dest == "" ||
+		country.ServerNames == "" || country.ShortIDs == "" {
+		return 0, constants.ErrEmptyFields
+	}
+
+	return cs.cr.Add(country)
+}
+
+func (cs *Country) Update(code string, newCountry *models.Country) error {
+	if code == "" || newCountry == nil {
+		return constants.ErrEmptyFields
+	}
+
+	return cs.cr.Update(code, newCountry)
+}
+
+func (cs *Country) Delete(code string) error {
+	if code == "" {
+		return constants.ErrEmptyFields
+	}
+
+	return cs.cr.Delete(code)
+}
+
+func (cs *Country) ProcessButtons(countries []*models.Country) ([]models.ButtonOption, []int) {
+	listCountries := make([]models.ButtonOption, 0, len(countries))
 
 	for _, country := range countries {
 		listCountries = append(listCountries, models.ButtonOption{
-			Value:   country.CountryCode,
-			Display: country.CountryName,
+			Value:   country.Code,
+			Display: fmt.Sprintf("%s %s", country.Emoji, country.Code),
 		})
 	}
-
-	listCountries = append(listCountries, models.ButtonOption{
-		Value:   "back",
-		Display: "Назад",
-	})
 
 	var groups []int
 	remaining := len(listCountries)
@@ -47,32 +81,4 @@ func (cs *Country) ProcessButtons(countries []models.Country) ([]models.ButtonOp
 	}
 
 	return listCountries, groups
-}
-
-func (cs *Country) GetAll() ([]models.Country, error) {
-	return cs.cr.GetAll()
-}
-
-func (cs *Country) Get(countryCode string) (models.Country, error) {
-	if countryCode == "" {
-		return models.Country{}, errors.New("countryCode is empty")
-	}
-
-	return cs.cr.Get(countryCode)
-}
-
-func (cs *Country) Add(country models.Country) (int, error) {
-	if country.CountryCode == "" || country.CountryName == "" {
-		return 0, errors.New("countryCode or countryName is empty")
-	}
-
-	return cs.cr.Add(country)
-}
-
-func (cs *Country) Delete(countryCode string) error {
-	if countryCode == "" {
-		return errors.New("countryCode is empty")
-	}
-
-	return cs.cr.Delete(countryCode)
 }

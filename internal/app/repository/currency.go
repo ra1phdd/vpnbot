@@ -1,15 +1,11 @@
 package repository
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"log/slog"
-	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
+	"nsvpn/pkg/cache"
 	"nsvpn/pkg/logger"
 	"time"
 )
@@ -17,10 +13,10 @@ import (
 type Currency struct {
 	log   *logger.Logger
 	db    *gorm.DB
-	cache *redis.Client
+	cache *cache.Cache
 }
 
-func NewCurrency(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Currency {
+func NewCurrency(log *logger.Logger, db *gorm.DB, cache *cache.Cache) *Currency {
 	return &Currency{
 		log:   log,
 		db:    db,
@@ -28,104 +24,117 @@ func NewCurrency(log *logger.Logger, db *gorm.DB, cache *redis.Client) *Currency
 	}
 }
 
-func (cr *Currency) GetAll() ([]models.Currency, error) {
+func (cr *Currency) GetAll() (currencies []*models.Currency, err error) {
 	cacheKey := "currency:all"
-	cacheValue, err := cr.cache.Get(context.Background(), cacheKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		cr.log.Error(constants.ErrGetDataFromCache, err)
-		return nil, err
-	}
-
-	var currencies []models.Currency
-	if cacheValue != "" {
-		if err := json.Unmarshal([]byte(cacheValue), &currencies); err != nil {
-			cr.log.Error(constants.ErrUnmarshalDataFromJSON, err)
-			return nil, err
-		}
+	if err = cr.cache.Get(cacheKey, currencies); err == nil {
+		cr.log.Debug("Returning currencies from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(currencies)))
 		return currencies, nil
 	}
 
-	if err := cr.db.Find(&currencies).Error; err != nil {
+	currencies = make([]*models.Currency, 0)
+	if err = cr.db.Find(&currencies).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			cr.log.Debug("No currencies found in database")
 			return nil, nil
 		}
 
-		cr.log.Error(constants.ErrGetDataFromDB, err)
+		cr.log.Error("Failed to get data from db", err)
 		return nil, err
 	}
 
-	jsonData, err := json.Marshal(currencies)
-	if err != nil {
-		cr.log.Error(constants.ErrMarshalDataToJSON, err)
-		return nil, err
-	}
-
-	if err := cr.cache.Set(context.Background(), cacheKey, jsonData, 0).Err(); err != nil {
-		cr.log.Error(constants.ErrSetDataToCache, err)
-		return nil, err
-	}
-
+	cr.cache.Set(cacheKey, currencies, 15*time.Minute)
+	cr.log.Debug("Returning currencies from db", slog.Int("count", len(currencies)))
 	return currencies, nil
 }
 
-func (cr *Currency) Get(currencyCode string) (models.Currency, error) {
-	cacheKey := fmt.Sprintf("currency:%s", currencyCode)
-	cacheValue, err := cr.cache.Get(context.Background(), cacheKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		cr.log.Error(constants.ErrGetDataFromCache, err, slog.String("currencyCode", currencyCode))
-		return models.Currency{}, err
-	}
-
-	var currency models.Currency
-	if cacheValue != "" {
-		if err := json.Unmarshal([]byte(cacheValue), &currency); err != nil {
-			cr.log.Error(constants.ErrUnmarshalDataFromJSON, err, slog.String("currencyCode", currencyCode))
-			return models.Currency{}, err
-		}
+func (cr *Currency) Get(code string) (currency *models.Currency, err error) {
+	cacheKey := "currency:" + code
+	if err = cr.cache.Get(cacheKey, currency); err == nil {
+		cr.log.Debug("Returning currency from cache", slog.String("cache_key", cacheKey), slog.Any("currency", currency))
 		return currency, nil
 	}
 
-	if err := cr.db.Where("currency_code = ?", currencyCode).First(&currency).Error; err != nil {
+	currency = &models.Currency{}
+	if err = cr.db.Where("code = ?", code).Order("id DESC").First(&currency).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return models.Currency{}, nil
+			cr.log.Debug("Currency not found in database", slog.String("code", code))
+			return nil, nil
 		}
 
-		cr.log.Error(constants.ErrGetDataFromDB, err, slog.String("currencyCode", currencyCode))
-		return models.Currency{}, err
+		cr.log.Error("Failed to get currency from db", err, slog.String("code", code))
+		return nil, err
 	}
 
-	jsonData, err := json.Marshal(currency)
-	if err != nil {
-		cr.log.Error(constants.ErrMarshalDataToJSON, err, slog.String("currencyCode", currencyCode))
-		return models.Currency{}, err
-	}
-	if err := cr.cache.Set(context.Background(), cacheKey, jsonData, 15*time.Minute).Err(); err != nil {
-		cr.log.Error(constants.ErrSetDataToCache, err, slog.String("currencyCode", currencyCode))
-		return models.Currency{}, err
-	}
-
+	cr.cache.Set(cacheKey, currency, 15*time.Minute)
+	cr.log.Debug("Returning currency from db", slog.String("code", code))
 	return currency, nil
 }
 
-func (cr *Currency) Add(currency models.Currency) (int, error) {
+func (cr *Currency) Add(currency *models.Currency) (int, error) {
 	if err := cr.db.Create(&currency).Error; err != nil {
-		cr.log.Error(constants.ErrExecQueryFromDB, err, slog.Any("currency", currency))
+		cr.log.Error("Failed to create currency in db", err, slog.Any("currency", currency))
 		return 0, err
 	}
+
+	cr.cache.Delete("currency:all")
+	cr.log.Debug("Added new currency in db", slog.Any("currency", currency))
 	return currency.ID, nil
 }
 
-func (cr *Currency) Delete(currencyCode string) error {
-	if err := cr.db.Where("currency_code = ?", currencyCode).Delete(&models.Currency{}).Error; err != nil {
-		cr.log.Error(constants.ErrExecQueryFromDB, err, slog.String("currencyCode", currencyCode))
+func (cr *Currency) Update(code string, newCurrency *models.Currency) error {
+	currency, err := cr.Get(code)
+	if err != nil {
+		cr.log.Error("Failed to get currency for update", err, slog.String("code", code))
 		return err
 	}
 
-	cacheKey := fmt.Sprintf("currency:%s", currencyCode)
-	if err := cr.cache.Del(context.Background(), cacheKey).Err(); err != nil {
-		cr.log.Error(constants.ErrDeleteDataFromCache, err, slog.String("currencyCode", currencyCode))
+	tx := cr.db.Begin()
+	if tx.Error != nil {
+		cr.log.Error("Failed to begin transaction", tx.Error, slog.String("code", code))
+		return tx.Error
+	}
+
+	if err = updateField(cr.log, tx, currency, "symbol", currency.Symbol, newCurrency.Symbol); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err = updateField(cr.log, tx, currency, "name", currency.Name, newCurrency.Name); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err = updateField(cr.log, tx, currency, "exchange_rate", currency.ExchangeRate, newCurrency.ExchangeRate); err != nil {
+		tx.Rollback()
 		return err
 	}
 
+	if err = tx.Commit().Error; err != nil {
+		cr.log.Error("Failed to commit transaction", err, slog.String("code", code))
+		return err
+	}
+
+	cr.cache.Delete("currency:all", "currency:"+code)
+	cr.log.Debug("Successfully updated currency", slog.String("code", code), slog.Any("updatedFields", newCurrency))
+	return nil
+}
+
+func (cr *Currency) UpdateIsBase(code string, isBase bool) error {
+	if err := cr.db.Model(&models.Key{}).Where("code = ?", code).Update("is_base", isBase).Error; err != nil {
+		cr.log.Error("Failed to update is_base", err, slog.String("code", code))
+		return err
+	}
+
+	cr.cache.Delete("currency:all", "currency:"+code)
+	cr.log.Debug("Successfully updated currency", slog.String("code", code), slog.Bool("isBase", isBase))
+	return nil
+}
+
+func (cr *Currency) Delete(code string) error {
+	if err := cr.db.Where("code = ?", code).Delete(&models.Currency{}).Error; err != nil {
+		cr.log.Error("Failed to delete currency", err, slog.String("code", code))
+		return err
+	}
+
+	cr.cache.Delete("currency:all", "currency:"+code)
+	cr.log.Debug("Deleted currency from db", slog.String("code", code))
 	return nil
 }

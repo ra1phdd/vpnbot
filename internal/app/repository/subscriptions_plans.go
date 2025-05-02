@@ -1,0 +1,115 @@
+package repository
+
+import (
+	"errors"
+	"fmt"
+	"gorm.io/gorm"
+	"log/slog"
+	"nsvpn/internal/app/models"
+	"nsvpn/pkg/cache"
+	"nsvpn/pkg/logger"
+	"time"
+)
+
+type SubscriptionsPlans struct {
+	log   *logger.Logger
+	db    *gorm.DB
+	cache *cache.Cache
+}
+
+func (sr *SubscriptionsPlans) GetAll() (plans []*models.SubscriptionPlan, err error) {
+	cacheKey := "subscription_plan:all"
+	if err = sr.cache.Get(cacheKey, plans); err == nil {
+		sr.log.Debug("Returning subscription Plans from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(plans)))
+		return plans, nil
+	}
+
+	if err = sr.db.Preload("SubscriptionPrice").Find(&plans).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			sr.log.Debug("No subscription Plans found in database")
+			return nil, nil
+		}
+
+		sr.log.Error("Failed to get data from db", err)
+		return nil, err
+	}
+
+	sr.cache.Set(cacheKey, plans, 1*time.Hour)
+	sr.log.Debug("Returning subscription Plans from db", slog.String("cache_key", cacheKey), slog.Int("count", len(plans)))
+	return plans, nil
+}
+
+func (sr *SubscriptionsPlans) Get(id int) (plan *models.SubscriptionPlan, err error) {
+	cacheKey := fmt.Sprintf("subscription_plan:%d", id)
+	if err = sr.cache.Get(cacheKey, plan); err == nil {
+		sr.log.Debug("Returning subscription plan from cache", slog.String("cache_key", cacheKey), slog.Int("id", id))
+		return plan, nil
+	}
+
+	if err = sr.db.Preload("SubscriptionPrice").First(&plan, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			sr.log.Debug("Subscription plan not found in database", slog.Int("id", id))
+			return nil, nil
+		}
+		sr.log.Error("Failed to get data from db", err, slog.Int("id", id))
+		return nil, err
+	}
+
+	sr.cache.Set(cacheKey, plan, 1*time.Hour)
+	sr.log.Debug("Returning subscription plan from db", slog.String("cache_key", cacheKey), slog.Int("id", id))
+	return plan, nil
+}
+
+func (sr *SubscriptionsPlans) Add(plan *models.SubscriptionPlan) error {
+	if err := sr.db.Create(&plan).Error; err != nil {
+		sr.log.Error("Failed to execute query from db", err, slog.Any("plan", plan))
+		return err
+	}
+
+	sr.cache.Delete("subscription_plan:all")
+	sr.log.Debug("Added new subscription plan in db", slog.Any("plan", plan))
+	return nil
+}
+
+func (sr *SubscriptionsPlans) Update(id int, newPlan *models.SubscriptionPlan) error {
+	plan, err := sr.Get(id)
+	if err != nil {
+		sr.log.Error("Failed to execute query from db", err, slog.Int("id", id))
+		return err
+	}
+
+	tx := sr.db.Begin()
+	if tx.Error != nil {
+		sr.log.Error("Failed to begin transaction", tx.Error, slog.Int("id", id))
+		return tx.Error
+	}
+
+	if err = updateField(sr.log, tx, plan, "name", plan.Name, newPlan.Name); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err = updateField(sr.log, tx, plan, "duration_days", plan.DurationDays, newPlan.DurationDays); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		sr.log.Error("Failed to commit transaction", err, slog.Int("id", id))
+		return err
+	}
+
+	sr.cache.Delete(fmt.Sprintf("subscription_plan:%d", id), "subscription_plan:all")
+	sr.log.Debug("Successfully updated subscription newPlan", slog.Int("id", id))
+	return nil
+}
+
+func (sr *SubscriptionsPlans) Delete(id int) error {
+	if err := sr.db.Delete(&models.SubscriptionPlan{}, id).Error; err != nil {
+		sr.log.Error("Failed to delete plan from db", err, slog.Int("id", id))
+		return err
+	}
+
+	sr.cache.Delete(fmt.Sprintf("subscription_plan:%d", id), "subscription_plan:all")
+	sr.log.Debug("Deleted subscription plan from db", slog.Int("id", id))
+	return nil
+}

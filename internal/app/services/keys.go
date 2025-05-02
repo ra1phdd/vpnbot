@@ -1,7 +1,7 @@
 package services
 
 import (
-	"errors"
+	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
 	"nsvpn/pkg/logger"
@@ -19,45 +19,46 @@ func NewKeys(log *logger.Logger, kr *repository.Keys) *Keys {
 	}
 }
 
-func (ks *Keys) Get(serverId int, userId int64) (key models.Key, err error) {
-	if serverId == 0 || userId == 0 {
-		return models.Key{}, errors.New("serverId or userId is empty")
-	}
-
-	return ks.kr.Get(serverId, userId)
+func (ks *Keys) GetAll(userID int64) (keys []*models.Key, err error) {
+	return ks.kr.GetAll(userID)
 }
 
-func (ks *Keys) Add(key models.Key) (err error) {
-	if key.UserID == 0 || key.ServerID == 0 || key.UUID == "" {
-		return errors.New("userId or serverId or uuid is empty")
+func (ks *Keys) Get(countryID int, userID int64) (key *models.Key, err error) {
+	if countryID == 0 || userID == 0 {
+		return nil, constants.ErrEmptyFields
 	}
-	if key.SpeedLimit < 0 || key.TrafficLimit < 0 || key.TrafficUsed < 0 {
-		return errors.New("speedLimit or trafficLimit or trafficUsed is invalid")
+
+	return ks.kr.Get(countryID, userID)
+}
+
+func (ks *Keys) Add(key *models.Key) error {
+	if key.UserID == 0 || key.CountryID == 0 || key.UUID == "" || key.SpeedLimit < 0 || key.TrafficLimit < 0 || key.TrafficUsed < 0 {
+		return constants.ErrEmptyFields
 	}
 
 	return ks.kr.Add(key)
 }
 
-func (ks *Keys) Update(serverId int, userId int64, key models.Key) error {
-	if serverId == 0 || userId == 0 || key == (models.Key{}) {
-		return errors.New("serverId, userId or key is empty")
+func (ks *Keys) Update(countryID int, userID int64, newKey *models.Key) error {
+	if countryID == 0 || userID == 0 || newKey == nil {
+		return constants.ErrEmptyFields
 	}
 
-	return ks.kr.Update(serverId, userId, key)
+	return ks.kr.Update(countryID, userID, newKey)
 }
 
-func (ks *Keys) UpdateIsActive(userId int64, serverId int, isActive bool) error {
-	if serverId == 0 || userId == 0 {
-		return errors.New("serverId or userId is empty")
+func (ks *Keys) UpdateIsActive(countryID int, userID int64, isActive bool) error {
+	if countryID == 0 || userID == 0 {
+		return constants.ErrEmptyFields
 	}
 
-	return ks.kr.UpdateIsActive(userId, serverId, isActive)
+	return ks.kr.UpdateIsActive(countryID, userID, isActive)
 }
 
-func (ks *Keys) Delete(uuid string) error {
-	if uuid == "" {
-		return errors.New("serverId or userId is empty")
+func (ks *Keys) Delete(countryID int, userID int64) error {
+	if countryID == 0 || userID == 0 {
+		return constants.ErrEmptyFields
 	}
 
-	return ks.kr.Delete(uuid)
+	return ks.kr.Delete(countryID, userID)
 }

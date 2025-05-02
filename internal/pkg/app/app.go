@@ -7,12 +7,14 @@ import (
 	"gopkg.in/telebot.v4"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"nsvpn/internal/app/api"
 	"nsvpn/internal/app/config"
 	"nsvpn/internal/app/handlers"
 	"nsvpn/internal/app/middleware"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
 	"nsvpn/internal/app/services"
+	"nsvpn/pkg/cache"
 	"nsvpn/pkg/logger"
 	"time"
 )
@@ -21,8 +23,9 @@ type App struct {
 	cfg   *config.Configuration
 	log   *logger.Logger
 	db    *gorm.DB
-	redis *redis.Client
+	cache *cache.Cache
 	bot   *telebot.Bot
+	api   *api.API
 
 	countryRepo       *repository.Country
 	currencyRepo      *repository.Currency
@@ -33,10 +36,8 @@ type App struct {
 	keysRepo          *repository.Keys
 	usersRepo         *repository.Users
 
-	AcceptOfferButtons   *services.Buttons
 	ClientButtons        *services.Buttons
 	ClientButtonsWithSub *services.Buttons
-	ListSubscriptions    *services.Buttons
 
 	baseService          *services.Base
 	countryService       *services.Country
@@ -47,6 +48,7 @@ type App struct {
 	serversService       *services.Servers
 	keysService          *services.Keys
 	usersService         *services.Users
+	checkService         *services.Check
 
 	usersMiddleware *middleware.Users
 
@@ -64,35 +66,95 @@ func New() error {
 		log: logger.New(),
 	}
 
-	var err error
+	if err := a.initConfig(); err != nil {
+		return err
+	}
+
+	if err := a.initDB(); err != nil {
+		return err
+	}
+
+	if err := a.initCache(); err != nil {
+		return err
+	}
+
+	if err := a.initBot(); err != nil {
+		return err
+	}
+
+	a.ClientButtons = services.NewButtons(models.ClientButtons, []int{1, 2}, "reply")
+	a.ClientButtonsWithSub = services.NewButtons(models.ClientButtonsWithSub, []int{1, 2}, "reply")
+
+	a.api = api.NewAPI(a.log)
+	a.initRepo()
+	a.initServices()
+	a.initMiddlewares()
+	a.initHandlers()
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+
+		a.checkService.Run()
+		for range ticker.C {
+			a.checkService.Run()
+		}
+	}()
+
+	return a.run()
+}
+
+func (a *App) initConfig() (err error) {
 	a.cfg, err = config.NewConfig()
 	if err != nil {
 		a.log.Error("Error loading config from env", err)
 		return err
 	}
+	a.log.SetLogLevel(a.cfg.LoggerLevel)
+	return nil
+}
 
+func (a *App) initDB() (err error) {
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable TimeZone=Europe/Moscow",
 		a.cfg.DB.Address, a.cfg.DB.Username, a.cfg.DB.Password, a.cfg.DB.Name, a.cfg.DB.Port)
 	a.db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return err
 	}
-	err = a.db.AutoMigrate(
+	return a.db.AutoMigrate(
 		&models.User{},
-		&models.Partner{},
 		&models.Country{},
 		&models.Server{},
 		&models.Subscription{},
+		&models.SubscriptionPlan{},
+		&models.SubscriptionPrice{},
 		&models.Currency{},
 		&models.Payment{},
 		&models.Key{},
 		&models.Promocode{},
 		&models.PromocodeActivations{},
 	)
+}
+
+func (a *App) initCache() error {
+	ctx := context.Background()
+	client := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", a.cfg.Redis.Address, a.cfg.Redis.Port),
+		Username: a.cfg.Redis.Username,
+		Password: a.cfg.Redis.Password,
+		DB:       a.cfg.Redis.DB,
+	})
+	err := client.Ping(ctx).Err()
 	if err != nil {
 		return err
 	}
+	client.FlushAll(ctx)
 
+	a.cache = cache.New(a.log, client)
+	return nil
+}
+
+func (a *App) initBot() (err error) {
 	a.bot, err = telebot.NewBot(telebot.Settings{
 		Token:  a.cfg.TelegramAPI,
 		Poller: &telebot.LongPoller{Timeout: 1 * time.Second},
@@ -102,36 +164,21 @@ func New() error {
 		return err
 	}
 
-	a.redis = redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", a.cfg.Redis.Address, a.cfg.Redis.Port),
-		Username: a.cfg.Redis.Username,
-		Password: a.cfg.Redis.Password,
-		DB:       a.cfg.Redis.DB,
-	})
-	err = a.redis.Ping(context.Background()).Err()
-	if err != nil {
-		return err
-	}
+	return nil
+}
 
-	a.redis.FlushAll(context.Background())
+func (a *App) initRepo() {
+	a.countryRepo = repository.NewCountry(a.log, a.db, a.cache)
+	a.currencyRepo = repository.NewCurrency(a.log, a.db, a.cache)
+	a.paymentsRepo = repository.NewPayments(a.log, a.db, a.cache)
+	a.promocodesRepo = repository.NewPromocodes(a.log, a.db, a.cache)
+	a.serversRepo = repository.NewServers(a.log, a.db, a.cache)
+	a.subscriptionsRepo = repository.NewSubscriptions(a.log, a.db, a.cache)
+	a.keysRepo = repository.NewKeys(a.log, a.db, a.cache)
+	a.usersRepo = repository.NewUsers(a.log, a.db, a.cache)
+}
 
-	// repo
-	a.countryRepo = repository.NewCountry(a.log, a.db, a.redis)
-	a.currencyRepo = repository.NewCurrency(a.log, a.db, a.redis)
-	a.paymentsRepo = repository.NewPayments(a.log, a.db, a.redis)
-	a.promocodesRepo = repository.NewPromocodes(a.log, a.db, a.redis)
-	a.serversRepo = repository.NewServers(a.log, a.db, a.redis)
-	a.subscriptionsRepo = repository.NewSubscriptions(a.log, a.db, a.redis)
-	a.keysRepo = repository.NewKeys(a.log, a.db, a.redis)
-	a.usersRepo = repository.NewUsers(a.log, a.db, a.redis)
-
-	// buttons
-	a.AcceptOfferButtons = services.NewButtons(models.AcceptOfferButton, []int{1}, "inline")
-	a.ClientButtons = services.NewButtons(models.ClientButtons, []int{1, 2}, "reply")
-	a.ClientButtonsWithSub = services.NewButtons(models.ClientButtonsWithSub, []int{1, 2}, "reply")
-	a.ListSubscriptions = services.NewButtons(models.ListSubscriptions, []int{1, 1, 1}, "inline")
-
-	// services
+func (a *App) initServices() {
 	a.baseService = services.NewBase(a.log)
 	a.countryService = services.NewCountry(a.log, a.countryRepo)
 	a.currencyService = services.NewCurrency(a.log, a.currencyRepo)
@@ -140,37 +187,31 @@ func New() error {
 	a.usersService = services.NewUsers(a.log, a.usersRepo)
 	a.keysService = services.NewKeys(a.log, a.keysRepo)
 	a.serversService = services.NewServers(a.log, a.serversRepo)
-
-	// middleware
-	a.usersMiddleware = middleware.NewUsers(a.log, a.usersRepo, a.subscriptionsService)
-
-	// handlers
-	a.keysHandler = handlers.NewKeys(a.log, a.keysService, a.subscriptionsService)
-	a.subscriptionsHandler = handlers.NewSubscriptions(a.log, a.ListSubscriptions)
-	a.serversHandler = handlers.NewServers(a.log, a.bot, a.serversService, a.keysHandler, a.countryService)
-	a.baseHandler = handlers.NewBase(a.log, a.AcceptOfferButtons, a.ClientButtons, a.ClientButtonsWithSub, a.usersService, a.subscriptionsService, a.serversHandler)
-	a.paymentsHandler = handlers.NewPayments(a.log, a.paymentsService, a.currencyService, a.subscriptionsService, a.ClientButtonsWithSub)
-	a.promocodesHandler = handlers.NewPromocodes(a.log, a.promocodesService)
-	a.usersHandler = handlers.NewUsers(a.log)
-
-	return RunBot(a)
+	a.checkService = services.NewCheck(a.log, a.bot, a.keysService, a.subscriptionsService, a.serversService, a.api, a.ClientButtons)
 }
 
-func RunBot(a *App) error {
+func (a *App) initMiddlewares() {
+	a.usersMiddleware = middleware.NewUsers(a.log, a.usersRepo, a.subscriptionsService)
+}
+
+func (a *App) initHandlers() {
+	a.keysHandler = handlers.NewKeys(a.log, a.bot, a.keysService, a.serversService, a.subscriptionsService, a.api)
+	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.paymentsService, a.currencyService, a.subscriptionsService, a.usersService, a.ClientButtonsWithSub)
+	a.subscriptionsHandler = handlers.NewSubscriptions(a.log, a.bot, a.subscriptionsService, a.currencyService, a.paymentsService, a.usersService, a.paymentsHandler, a.ClientButtonsWithSub)
+	a.serversHandler = handlers.NewServers(a.log, a.bot, a.subscriptionsService, a.serversService, a.keysHandler, a.countryService, a.api)
+	a.baseHandler = handlers.NewBase(a.log, a.bot, a.ClientButtons, a.ClientButtonsWithSub, a.usersService, a.subscriptionsService, a.paymentsHandler)
+	a.promocodesHandler = handlers.NewPromocodes(a.log, a.promocodesService, a.usersService)
+	a.usersHandler = handlers.NewUsers(a.log)
+}
+
+func (a *App) run() error {
 	a.bot.Use(a.usersMiddleware.IsUser)
-	acceptOfferBtns := a.AcceptOfferButtons.GetBtns()
-	listSubsBtns := a.ListSubscriptions.GetBtns()
 
 	a.bot.Handle("/start", a.baseHandler.StartHandler)
 	a.bot.Handle("/help", a.baseHandler.HelpHandler)
-	a.bot.Handle(acceptOfferBtns["accept_offer"], a.baseHandler.AcceptOfferHandler)
+	a.bot.Handle("Профиль", a.baseHandler.ProfileHandler)
 
 	a.bot.Handle("Подключить VPN", a.subscriptionsHandler.ChooseDurationHandler)
-	a.bot.Handle(listSubsBtns["sub_one_month"], a.paymentsHandler.PaymentHandler)
-	a.bot.Handle(listSubsBtns["sub_three_month"], a.paymentsHandler.PaymentHandler)
-	a.bot.Handle(listSubsBtns["sub_six_month"], a.paymentsHandler.PaymentHandler)
-
-	a.bot.Handle("/pay", a.paymentsHandler.PaymentHandler)
 	a.bot.Handle(telebot.OnCheckout, a.paymentsHandler.PreCheckoutHandler)
 
 	a.bot.Handle("Список серверов", a.serversHandler.ListCountriesHandler)

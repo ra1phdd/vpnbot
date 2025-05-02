@@ -10,34 +10,37 @@ import (
 	"runtime"
 )
 
-type Logger struct {
-	log   *slog.Logger
-	level *slog.LevelVar
-}
-
 const (
 	LevelTrace = slog.Level(-8)
 	LevelFatal = slog.Level(12)
 )
 
-var LevelNames = map[slog.Leveler]string{
-	LevelTrace: "TRACE",
-	LevelFatal: "FATAL",
+type Logger struct {
+	log        *slog.Logger
+	level      *slog.LevelVar
+	levelNames map[slog.Leveler]string
 }
 
 func New() *Logger {
 	l := &Logger{
 		level: &slog.LevelVar{},
+		levelNames: map[slog.Leveler]string{
+			LevelTrace: "TRACE",
+			LevelFatal: "FATAL",
+		},
 	}
 	l.level.Set(slog.LevelInfo)
 
 	opts := &slog.HandlerOptions{
 		AddSource: true,
 		Level:     l.level,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.LevelKey {
-				level := a.Value.Any().(slog.Level)
-				levelLabel, exists := LevelNames[level]
+				level, ok := a.Value.Any().(slog.Level)
+				if !ok {
+					return a
+				}
+				levelLabel, exists := l.levelNames[level]
 				if !exists {
 					levelLabel = level.String()
 				}

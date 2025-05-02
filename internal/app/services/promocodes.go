@@ -1,9 +1,8 @@
 package services
 
 import (
-	"database/sql"
-	"errors"
 	"log/slog"
+	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
 	"nsvpn/pkg/logger"
@@ -21,66 +20,45 @@ func NewPromocodes(log *logger.Logger, pr *repository.Promocodes) *Promocodes {
 	}
 }
 
-func (ps *Promocodes) IsWork(code string, onlyNewUsers bool) bool {
+func (ps *Promocodes) GetAll() (promocodes []*models.Promocode, err error) {
+	return ps.pr.GetAll()
+}
+
+func (ps *Promocodes) Get(code string) (promocode *models.Promocode, err error) {
 	if code == "" {
-		return false
+		return nil, constants.ErrEmptyFields
 	}
 
-	data, err := ps.pr.GetByCode(code)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false
-		}
-		ps.log.Error("Failed to get promocode by code", err, slog.String("code", code))
-		return false
-	}
-
-	if data.OnlyNewUsers != onlyNewUsers || !data.IsActive || data.CurrentActivations > *data.TotalActivations {
-		return false
-	}
-
-	return true
+	return ps.pr.Get(code)
 }
 
-func (ps *Promocodes) GetAll(includeInactive bool) ([]models.Promocode, error) {
-	return ps.pr.GetAll(includeInactive)
-}
-
-func (ps *Promocodes) GetByCode(code string) (models.Promocode, error) {
-	if code == "" {
-		return models.Promocode{}, errors.New("code is empty")
-	}
-
-	return ps.pr.GetByCode(code)
-}
-
-func (ps *Promocodes) Add(promocode models.Promocode) error {
-	if promocode.Discount == 0 || promocode.CurrentActivations == 0 || promocode.Code == "" {
-		return errors.New("discount, currentActivations, or code is empty")
+func (ps *Promocodes) Add(promocode *models.Promocode) error {
+	if promocode.Code == "" || promocode.Discount == 0 || promocode.CurrentActivations == 0 {
+		return constants.ErrEmptyFields
 	}
 
 	return ps.pr.Add(promocode)
 }
 
-func (ps *Promocodes) Update(code string, promocode models.Promocode) error {
-	if code == "" || promocode == (models.Promocode{}) {
-		return errors.New("code or promocode is empty")
+func (ps *Promocodes) Update(code string, newPromocode *models.Promocode) error {
+	if code == "" || newPromocode == nil {
+		return constants.ErrEmptyFields
 	}
 
-	return ps.pr.Update(code, promocode)
+	return ps.pr.Update(code, newPromocode)
 }
 
-func (ps *Promocodes) UpdateOnlyNewUsers(code string, onlyNew bool) error {
+func (ps *Promocodes) UpdateOnlyNewUsers(code string, onlyNewUsers bool) error {
 	if code == "" {
-		return errors.New("code is empty")
+		return constants.ErrEmptyFields
 	}
 
-	return ps.pr.UpdateOnlyNewUsers(code, onlyNew)
+	return ps.pr.UpdateOnlyNewUsers(code, onlyNewUsers)
 }
 
 func (ps *Promocodes) UpdateIsActive(code string, isActive bool) error {
 	if code == "" {
-		return errors.New("code is empty")
+		return constants.ErrEmptyFields
 	}
 
 	return ps.pr.UpdateIsActive(code, isActive)
@@ -88,8 +66,26 @@ func (ps *Promocodes) UpdateIsActive(code string, isActive bool) error {
 
 func (ps *Promocodes) Delete(code string) error {
 	if code == "" {
-		return errors.New("code is empty")
+		return constants.ErrEmptyFields
 	}
 
 	return ps.pr.Delete(code)
+}
+
+func (ps *Promocodes) IsWork(code string, isNewUsers bool) bool {
+	if code == "" {
+		return false
+	}
+
+	data, err := ps.pr.Get(code)
+	if err != nil {
+		ps.log.Error("Failed to get promocode by code", err, slog.String("code", code))
+		return false
+	}
+
+	if data.OnlyNewUsers != isNewUsers || !data.IsActive || data.CurrentActivations > *data.TotalActivations {
+		return false
+	}
+
+	return true
 }
