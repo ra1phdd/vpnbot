@@ -32,7 +32,11 @@ func (cs *Currency) Get(code string) (currency *models.Currency, err error) {
 	return cs.cr.Get(code)
 }
 
-func (cs *Currency) Add(currency *models.Currency) (int, error) {
+func (cs *Currency) GetIsBase() (currency *models.Currency, err error) {
+	return cs.cr.GetIsBase()
+}
+
+func (cs *Currency) Add(currency *models.Currency) (uint, error) {
 	if currency.Code == "" || currency.Symbol == "" || currency.Name == "" || currency.ExchangeRate == 0 {
 		return 0, constants.ErrEmptyFields
 	}
@@ -46,14 +50,6 @@ func (cs *Currency) Update(code string, newCurrency *models.Currency) error {
 	}
 
 	return cs.cr.Update(code, newCurrency)
-}
-
-func (cs *Currency) UpdateIsBase(code string, isBase bool) error {
-	if code == "" {
-		return constants.ErrEmptyFields
-	}
-
-	return cs.cr.UpdateIsBase(code, isBase)
 }
 
 func (cs *Currency) Delete(code string) error {

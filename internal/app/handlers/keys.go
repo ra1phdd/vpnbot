@@ -7,6 +7,7 @@ import (
 	"gopkg.in/telebot.v4"
 	"gorm.io/gorm"
 	"nsvpn/internal/app/api"
+	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
 	"nsvpn/pkg/logger"
@@ -36,49 +37,39 @@ func NewKeys(log *logger.Logger, bot *telebot.Bot, ks *services.Keys, servs *ser
 }
 
 func (k *Keys) GetKeyHandler(c telebot.Context, country *models.Country) error {
-	sub, err := k.ss.GetLastByUserID(c.Sender().ID, true)
-	if err != nil {
-		k.log.Error("Failed get last sub", err)
-		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
-	}
-	if sub == nil || !(sub.EndDate.After(time.Now().UTC()) && sub.IsActive) {
-		return c.Send("У вас нет прав для выполнения данной команды")
+	btns := getReplyButtons(c)
+	sub, subOk := c.Get("sub").(*models.Subscription)
+	if subOk && !sub.IsActive && (sub.EndDate.Before(time.Now()) && (!sub.EndDate.IsZero() || sub.ID == 0)) {
+		return c.Send(constants.UserError, btns)
 	}
 
 	key, err := k.getOrCreateKey(c.Sender().ID, country.ID)
 	if err != nil {
-		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
+		return c.Send(constants.UserError, btns)
 	}
 
 	servers, err := k.servs.GetAllByCountryID(country.ID)
 	if err != nil {
-		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
+		return c.Send(constants.UserError, btns)
 	}
 
 	email := fmt.Sprintf("nsvpn-%d-%s", c.Sender().ID, strings.ToLower(country.Code))
-	var wg sync.WaitGroup
-	for _, serv := range servers {
-		wg.Add(1)
-		go func(server *models.Server) {
-			defer wg.Done()
+	k.processServers(servers, func(server *models.Server) {
+		found, err := k.api.IsFoundRequest(server, key.UUID)
+		if err != nil {
+			k.log.Error("Failed check if request", err)
+			return
+		}
 
-			found, err := k.api.IsFoundRequest(server, key.UUID)
-			if err != nil {
-				k.log.Error("Failed check if request", err)
-				return
-			}
+		if found {
+			return
+		}
 
-			if found {
-				return
-			}
-
-			if err := k.api.AddRequest(server, key.UUID, email, sub.EndDate); err != nil {
-				k.log.Error("Failed add request", err)
-				return
-			}
-		}(serv)
-	}
-	wg.Wait()
+		if err := k.api.AddRequest(server, key.UUID, email, sub.EndDate); err != nil {
+			k.log.Error("Failed add request", err)
+			return
+		}
+	})
 
 	updateBtn := services.NewButtons([]models.ButtonOption{{
 		Value:   "update_" + key.UUID,
@@ -90,42 +81,41 @@ func (k *Keys) GetKeyHandler(c telebot.Context, country *models.Country) error {
 		})
 	}
 
-	keyMessage := k.ss.GetVlessKey(key.UUID, country, email)
-	return c.Send(fmt.Sprintf("Ваш ключ для сервера %s %s:\n```%s```", country.Emoji, country.Code, keyMessage), &telebot.SendOptions{
+	keyMessage := k.ks.GetVlessKey(key.UUID, country, email)
+	return c.Send(fmt.Sprintf("🔑 Ваш ключ для сервера %s %s:\n```%s```", country.Emoji, country.Code, keyMessage), &telebot.SendOptions{
 		ReplyMarkup: updateBtn.AddBtns(),
 		ParseMode:   telebot.ModeMarkdown,
 	})
 }
 
 func (k *Keys) UpdateKeyHandler(c telebot.Context, country *models.Country, servers []*models.Server, email string, endDate time.Time) error {
-	u := strings.TrimPrefix(c.Callback().Unique, "update_")
-	newUUID, _ := uuid.NewUUID()
-	err := k.ks.Update(country.ID, c.Sender().ID, &models.Key{UUID: newUUID.String()})
-	if err != nil {
+	btns := getReplyButtons(c)
+	if err := validateSubscription(c); err != nil {
 		return err
 	}
 
-	var wg sync.WaitGroup
-	for _, serv := range servers {
-		wg.Add(1)
-		go func(server *models.Server) {
-			defer wg.Done()
+	u := strings.TrimPrefix(c.Callback().Unique, "update_")
+	newUUID := uuid.New().String()
 
-			if err := k.api.DeleteRequest(server, u); err != nil && err.Error() != "record not found" {
-				k.log.Error("Failed delete request", err)
-				return
-			}
-
-			if err := k.api.AddRequest(server, newUUID.String(), email, endDate); err != nil {
-				k.log.Error("Failed add request", err)
-				return
-			}
-		}(serv)
+	err := k.ks.Update(country.ID, c.Sender().ID, &models.Key{UUID: newUUID})
+	if err != nil {
+		return c.Send(constants.UserError, btns)
 	}
+
+	k.processServers(servers, func(server *models.Server) {
+		if err := k.api.DeleteRequest(server, u); err != nil && err.Error() != "record not found" {
+			k.log.Error("Failed delete request", err)
+			return
+		}
+
+		if err := k.api.AddRequest(server, newUUID, email, endDate); err != nil {
+			k.log.Error("Failed add request", err)
+		}
+	})
 
 	if err = k.ks.Delete(country.ID, c.Sender().ID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		k.log.Error("Failed delete request", err)
-		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
+		return c.Send(constants.UserError, btns)
 	}
 
 	if c.Message() != nil {
@@ -135,11 +125,11 @@ func (k *Keys) UpdateKeyHandler(c telebot.Context, country *models.Country, serv
 		}
 	}
 
-	keyMessage := k.ss.GetVlessKey(newUUID.String(), country, email)
-	return c.Send(fmt.Sprintf("Ваш новый ключ для сервера %s %s:\n```%s```", country.Emoji, country.Code, keyMessage), telebot.ModeMarkdown)
+	keyMessage := k.ks.GetVlessKey(newUUID, country, email)
+	return c.Send(fmt.Sprintf("🔑 Ваш новый ключ для сервера %s %s:\n```%s```", country.Emoji, country.Code, keyMessage), telebot.ModeMarkdown)
 }
 
-func (k *Keys) getOrCreateKey(userID int64, countryID int) (*models.Key, error) {
+func (k *Keys) getOrCreateKey(userID int64, countryID uint) (*models.Key, error) {
 	key, err := k.ks.Get(countryID, userID)
 	if err != nil {
 		k.log.Error("Failed get key", err)
@@ -165,4 +155,16 @@ func (k *Keys) getOrCreateKey(userID int64, countryID int) (*models.Key, error) 
 	}
 
 	return newKey, nil
+}
+
+func (k *Keys) processServers(servers []*models.Server, process func(server *models.Server)) {
+	var wg sync.WaitGroup
+	for _, server := range servers {
+		wg.Add(1)
+		go func(server *models.Server) {
+			defer wg.Done()
+			process(server)
+		}(server)
+	}
+	wg.Wait()
 }

@@ -67,6 +67,10 @@ func (bs *Buttons) GetBtns() map[string]*telebot.Btn {
 	return bs.btns
 }
 
+func (bs *Buttons) GetBtn(value string) *telebot.Btn {
+	return bs.btns[value]
+}
+
 func (bs *Buttons) AddBtns() *telebot.ReplyMarkup {
 	switch bs.typeKeyboard {
 	case KeyboardTypeReply:

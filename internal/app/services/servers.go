@@ -25,7 +25,7 @@ func (ss *Servers) GetAll() (servers []*models.Server, err error) {
 	return ss.sr.GetAll()
 }
 
-func (ss *Servers) GetAllByCountryID(countryID int) (servers []*models.Server, err error) {
+func (ss *Servers) GetAllByCountryID(countryID uint) (servers []*models.Server, err error) {
 	if countryID == 0 {
 		return nil, constants.ErrEmptyFields
 	}
@@ -33,7 +33,7 @@ func (ss *Servers) GetAllByCountryID(countryID int) (servers []*models.Server, e
 	return ss.sr.GetAllByCountryID(countryID)
 }
 
-func (ss *Servers) Get(id int) (server *models.Server, err error) {
+func (ss *Servers) Get(id uint) (server *models.Server, err error) {
 	if id == 0 {
 		return nil, constants.ErrEmptyFields
 	}
@@ -49,7 +49,7 @@ func (ss *Servers) Add(server *models.Server) error {
 	return ss.sr.Add(server)
 }
 
-func (ss *Servers) Update(id int, newServer *models.Server) error {
+func (ss *Servers) Update(id uint, newServer *models.Server) error {
 	if id == 0 || newServer.IP == "" || newServer.CountryID == 0 || newServer.ChannelSpeed == 0 || newServer.Port == 0 {
 		return constants.ErrEmptyFields
 	}
@@ -57,7 +57,7 @@ func (ss *Servers) Update(id int, newServer *models.Server) error {
 	return ss.sr.Update(id, newServer)
 }
 
-func (ss *Servers) Delete(id int) error {
+func (ss *Servers) Delete(id uint) error {
 	if id == 0 {
 		return constants.ErrEmptyFields
 	}

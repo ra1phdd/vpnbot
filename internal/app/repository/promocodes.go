@@ -26,7 +26,7 @@ func NewPromocodes(log *logger.Logger, db *gorm.DB, cache *cache.Cache) *Promoco
 
 func (pr *Promocodes) GetAll() (promocodes []*models.Promocode, err error) {
 	cacheKey := "promocodes:all"
-	if err = pr.cache.Get(cacheKey, promocodes); err == nil {
+	if err = pr.cache.Get(cacheKey, &promocodes); err == nil {
 		pr.log.Debug("Returning promocodes from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(promocodes)))
 		return promocodes, nil
 	}
@@ -34,6 +34,7 @@ func (pr *Promocodes) GetAll() (promocodes []*models.Promocode, err error) {
 	promocodes = make([]*models.Promocode, 0)
 	if err = pr.db.Find(&promocodes).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			pr.cache.Set(cacheKey, promocodes, 15*time.Minute)
 			pr.log.Debug("No promocodes found in database")
 			return nil, nil
 		}
@@ -49,7 +50,7 @@ func (pr *Promocodes) GetAll() (promocodes []*models.Promocode, err error) {
 
 func (pr *Promocodes) GetAllActive() (promocodes []*models.Promocode, err error) {
 	cacheKey := "promocodes:only_active"
-	if err = pr.cache.Get(cacheKey, promocodes); err == nil {
+	if err = pr.cache.Get(cacheKey, &promocodes); err == nil {
 		pr.log.Debug("Returning promocodes from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(promocodes)))
 		return promocodes, nil
 	}
@@ -57,6 +58,7 @@ func (pr *Promocodes) GetAllActive() (promocodes []*models.Promocode, err error)
 	promocodes = make([]*models.Promocode, 0)
 	if err = pr.db.Where("is_active = ?", true).Find(&promocodes).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			pr.cache.Set(cacheKey, promocodes, 15*time.Minute)
 			pr.log.Debug("No promocodes found in database")
 			return nil, nil
 		}
@@ -72,13 +74,14 @@ func (pr *Promocodes) GetAllActive() (promocodes []*models.Promocode, err error)
 
 func (pr *Promocodes) Get(code string) (promocode *models.Promocode, err error) {
 	cacheKey := "promocodes:" + code
-	if err = pr.cache.Get(cacheKey, promocode); err == nil {
+	if err = pr.cache.Get(cacheKey, &promocode); err == nil {
 		pr.log.Debug("Returning promocode from cache", slog.String("cache_key", cacheKey), slog.String("code", code))
 		return promocode, nil
 	}
 
 	if err = pr.db.Where("code = ?", code).First(&promocode).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			pr.cache.Set(cacheKey, promocode, 15*time.Minute)
 			pr.log.Debug("Promocode not found in database", slog.String("code", code))
 			return nil, nil
 		}

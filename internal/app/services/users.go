@@ -28,6 +28,14 @@ func (us *Users) Get(id int64) (user *models.User, err error) {
 	return us.ur.Get(id)
 }
 
+func (us *Users) CountPartners(id int64) (count int64, err error) {
+	if id == 0 {
+		return 0, constants.ErrEmptyFields
+	}
+
+	return us.ur.CountPartners(id)
+}
+
 func (us *Users) Add(user *models.User) error {
 	if user.ID == 0 && user.Username == "" {
 		return constants.ErrEmptyFields
@@ -57,10 +65,10 @@ func (us *Users) UpdateIsSign(id int64, isSign bool) error {
 		return constants.ErrEmptyFields
 	}
 
-	return us.ur.UpdateIsAdmin(id, isSign)
+	return us.ur.UpdateIsSign(id, isSign)
 }
 
-func (us *Users) IncrementBalance(id int64, amount int) error {
+func (us *Users) IncrementBalance(id int64, amount float64) error {
 	if id == 0 || amount == 0 {
 		return constants.ErrEmptyFields
 	}
@@ -68,7 +76,7 @@ func (us *Users) IncrementBalance(id int64, amount int) error {
 	return us.ur.IncrementBalance(id, amount)
 }
 
-func (us *Users) DecrementBalance(id int64, amount int) error {
+func (us *Users) DecrementBalance(id int64, amount float64) error {
 	if id == 0 || amount == 0 {
 		return constants.ErrEmptyFields
 	}

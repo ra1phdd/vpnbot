@@ -5,6 +5,7 @@ import (
 	"go.uber.org/atomic"
 	"gopkg.in/telebot.v4"
 	"nsvpn/internal/app/api"
+	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
 	"nsvpn/pkg/logger"
@@ -16,14 +17,13 @@ type Servers struct {
 	log           *logger.Logger
 	bot           *telebot.Bot
 	kh            *Keys
-	subs          *services.Subscriptions
 	ss            *services.Servers
 	cs            *services.Country
 	countriesBtns *services.Buttons
 	api           *api.API
 }
 
-func NewServers(log *logger.Logger, bot *telebot.Bot, subs *services.Subscriptions, ss *services.Servers, kh *Keys, cs *services.Country, api *api.API) *Servers {
+func NewServers(log *logger.Logger, bot *telebot.Bot, ss *services.Servers, kh *Keys, cs *services.Country, api *api.API) *Servers {
 	countries, err := cs.GetAll()
 	if err != nil {
 		log.Error("Failed to get countries from db", err)
@@ -37,7 +37,6 @@ func NewServers(log *logger.Logger, bot *telebot.Bot, subs *services.Subscriptio
 		log:           log,
 		bot:           bot,
 		kh:            kh,
-		subs:          subs,
 		ss:            ss,
 		cs:            cs,
 		countriesBtns: countriesBtns,
@@ -53,66 +52,40 @@ func NewServers(log *logger.Logger, bot *telebot.Bot, subs *services.Subscriptio
 }
 
 func (s *Servers) ListCountriesHandler(c telebot.Context) error {
-	if isActive, _ := s.subs.IsActive(c.Sender().ID, true); !isActive {
-		return c.Send("У вас нет прав для выполнения данной команды")
+	if err := validateSubscription(c); err != nil {
+		return err
 	}
 
-	return c.Send("Список доступных стран", s.countriesBtns.AddBtns())
+	return c.Send("✈️ Список доступных стран", s.countriesBtns.AddBtns())
 }
 
 func (s *Servers) CountryHandler(c telebot.Context) error {
+	btns := getReplyButtons(c)
+	if err := validateSubscription(c); err != nil {
+		return err
+	}
+
 	country, err := s.cs.Get(c.Callback().Unique)
 	if err != nil {
-		return err
+		return c.Send(constants.UserError, btns)
 	}
 
 	return s.InfoHandler(c, country)
 }
 
 func (s *Servers) InfoHandler(c telebot.Context, country *models.Country) error {
-	if isActive, _ := s.subs.IsActive(c.Sender().ID, true); !isActive {
-		return c.Send("У вас нет прав для выполнения данной команды")
+	btns := getReplyButtons(c)
+	if err := validateSubscription(c); err != nil {
+		return err
 	}
 
 	servers, err := s.ss.GetAllByCountryID(country.ID)
 	if err != nil {
-		return c.Send("Упс! Что-то сломалось. Повторите попытку позже")
+		return c.Send(constants.UserError, btns)
 	}
 
-	var wg sync.WaitGroup
-	var sumLoad atomic.Float64
-	var inActive atomic.Int64
-	for _, serv := range servers {
-		wg.Add(1)
-		go func(server *models.Server) {
-			defer wg.Done()
-
-			load, err := s.api.GetLoadRequest(server)
-			if err != nil {
-				inActive.Add(1)
-			}
-			sumLoad.Add(load)
-		}(serv)
-	}
-	wg.Wait()
-
-	var loadMsg string
-	if int64(len(servers)) == inActive.Load() {
-		loadMsg = "не отвечает 🔴"
-	} else {
-		load := sumLoad.Load() / (float64(len(servers)) - float64(inActive.Load()))
-		switch {
-		case load <= 0.3:
-			loadMsg = "низкая 🟢"
-		case load > 0.3 && load <= 0.7:
-			loadMsg = "средняя 🌕"
-		case load > 0.7 && load <= 0.95:
-			loadMsg = "высокая 🟠"
-		case load > 0.95:
-			loadMsg = "критическая 🔴"
-		}
-	}
-	msg := fmt.Sprintf("%s %s\n🎛 Нагрузка на сервер: %s\n\n", country.Emoji, country.Code, loadMsg)
+	loadInfo := s.calculateServerLoad(servers)
+	msg := s.buildMessage(country, loadInfo)
 
 	getKeyBtn := services.NewButtons([]models.ButtonOption{{
 		Value:   "get_key_" + strings.ToLower(country.Code),
@@ -125,4 +98,66 @@ func (s *Servers) InfoHandler(c telebot.Context, country *models.Country) error 
 	}
 
 	return c.Edit(msg, getKeyBtn.AddBtns())
+}
+
+type LoadInfo struct {
+	TotalLoad  float64
+	Inactive   int64
+	TotalCount int
+}
+
+func (s *Servers) calculateServerLoad(servers []*models.Server) LoadInfo {
+	var (
+		wg       sync.WaitGroup
+		sumLoad  atomic.Float64
+		inActive atomic.Int64
+	)
+
+	for _, serv := range servers {
+		wg.Add(1)
+		go func(server *models.Server) {
+			defer wg.Done()
+			if load, err := s.api.GetLoadRequest(server); err != nil {
+				inActive.Add(1)
+			} else {
+				sumLoad.Add(load)
+			}
+		}(serv)
+	}
+	wg.Wait()
+
+	return LoadInfo{
+		TotalLoad:  sumLoad.Load(),
+		Inactive:   inActive.Load(),
+		TotalCount: len(servers),
+	}
+}
+
+func (s *Servers) buildMessage(country *models.Country, info LoadInfo) string {
+	loadMsg := s.getLoadStatusMessage(info)
+	return fmt.Sprintf("%s %s\n🎛 Нагрузка на сервер: %s\n\n",
+		country.Emoji,
+		country.Code,
+		loadMsg,
+	)
+}
+
+func (s *Servers) getLoadStatusMessage(info LoadInfo) string {
+	if int64(info.TotalCount) == info.Inactive {
+		return "не отвечает 🔴"
+	}
+
+	activeCount := float64(info.TotalCount) - float64(info.Inactive)
+	avgLoad := info.TotalLoad / activeCount
+
+	switch {
+	case avgLoad <= 0.3:
+		return "низкая 🟢"
+	case avgLoad <= 0.7:
+		return "средняя 🌕"
+	case avgLoad <= 0.95:
+		return "высокая 🟠"
+	default:
+		return "критическая 🔴"
+	}
 }

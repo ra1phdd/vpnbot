@@ -1,14 +1,14 @@
 package models
 
 type Key struct {
-	ID           int   `gorm:"primaryKey;autoIncrement"`
+	ID           uint  `gorm:"primaryKey;autoIncrement"`
 	UserID       int64 `gorm:"not null"`
 	User         User
-	CountryID    int `gorm:"not null"`
+	CountryID    uint `gorm:"not null"`
 	Country      Country
 	UUID         string `gorm:"size:512;not null"`
-	SpeedLimit   int
-	TrafficLimit int64
-	TrafficUsed  int64
+	SpeedLimit   uint64
+	TrafficLimit uint64
+	TrafficUsed  uint64
 	IsActive     bool `gorm:"default:true"`
 }

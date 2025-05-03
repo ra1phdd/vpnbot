@@ -1,14 +1,10 @@
 package services
 
 import (
-	"fmt"
-	"net"
-	"net/url"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
 	"nsvpn/pkg/logger"
-	"strings"
 	"time"
 )
 
@@ -55,7 +51,7 @@ func (ss *Subscriptions) GetLastByUserID(userID int64, isActive bool) (subscript
 	return ss.sr.GetLastByUserID(userID, isActive)
 }
 
-func (ss *Subscriptions) Add(subscription *models.Subscription) (int, error) {
+func (ss *Subscriptions) Add(subscription *models.Subscription) (uint, error) {
 	if subscription.UserID == 0 || (subscription.EndDate.Before(subscription.StartDate) && !subscription.EndDate.IsZero()) {
 		return 0, constants.ErrEmptyFields
 	}
@@ -63,7 +59,7 @@ func (ss *Subscriptions) Add(subscription *models.Subscription) (int, error) {
 	return ss.sr.Add(subscription)
 }
 
-func (ss *Subscriptions) UpdateEndDate(subID int, userID int64, endDate time.Time) error {
+func (ss *Subscriptions) UpdateEndDate(subID uint, userID int64, endDate time.Time) error {
 	if subID == 0 || userID == 0 || endDate.Before(time.Now()) {
 		return constants.ErrEmptyFields
 	}
@@ -71,7 +67,7 @@ func (ss *Subscriptions) UpdateEndDate(subID int, userID int64, endDate time.Tim
 	return ss.sr.UpdateEndDate(subID, userID, endDate)
 }
 
-func (ss *Subscriptions) UpdateIsActive(subID int, userID int64, isActive bool) error {
+func (ss *Subscriptions) UpdateIsActive(subID uint, userID int64, isActive bool) error {
 	if subID == 0 || userID == 0 {
 		return constants.ErrEmptyFields
 	}
@@ -79,7 +75,7 @@ func (ss *Subscriptions) UpdateIsActive(subID int, userID int64, isActive bool) 
 	return ss.sr.UpdateIsActive(subID, userID, isActive)
 }
 
-func (ss *Subscriptions) Delete(subID int, userID int64) error {
+func (ss *Subscriptions) Delete(subID uint, userID int64) error {
 	if subID <= 0 || userID == 0 {
 		return constants.ErrEmptyFields
 	}
@@ -106,8 +102,4 @@ func (ss *Subscriptions) IsActive(userID int64, isActive bool) (bool, error) {
 		return true, nil
 	}
 	return false, nil
-}
-
-func (ss *Subscriptions) GetVlessKey(uuid string, country *models.Country, countryCode string) string {
-	return fmt.Sprintf("vless://%s@%s/?type=tcp&security=reality&pbk=%s&fp=random&sni=%s&sid=%s&spx=%s#%s", uuid, net.JoinHostPort(country.Domain, "443"), country.PublicKey, strings.TrimSuffix(country.Dest, ":443"), country.ShortIDs, url.QueryEscape("/"), countryCode)
 }

@@ -18,6 +18,6 @@ func updateField(log *logger.Logger, tx *gorm.DB, dest any, fieldName string, cu
 		return err
 	}
 
-	log.Debug("Updated currency field", slog.String("field", fieldName), slog.Any("dest", dest), slog.Any("oldValue", currentVal), slog.Any("newValue", newVal))
+	log.Debug("Updated currency field", slog.String("field", fieldName), slog.Any("oldValue", currentVal), slog.Any("newValue", newVal))
 	return nil
 }

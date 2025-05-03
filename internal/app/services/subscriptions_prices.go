@@ -16,7 +16,7 @@ func (ss *SubscriptionsPrices) GetAll() (price []*models.SubscriptionPrice, err 
 	return ss.sr.Prices.GetAll()
 }
 
-func (ss *SubscriptionsPrices) Get(id int) (price *models.SubscriptionPrice, err error) {
+func (ss *SubscriptionsPrices) Get(id uint) (price *models.SubscriptionPrice, err error) {
 	if id == 0 {
 		return nil, constants.ErrEmptyFields
 	}
@@ -32,7 +32,7 @@ func (ss *SubscriptionsPrices) Add(price *models.SubscriptionPrice) error {
 	return ss.sr.Prices.Add(price)
 }
 
-func (ss *SubscriptionsPrices) UpdatePrice(id int, price float64) error {
+func (ss *SubscriptionsPrices) UpdatePrice(id uint, price float64) error {
 	if id == 0 || price == 0 {
 		return constants.ErrEmptyFields
 	}
@@ -40,7 +40,7 @@ func (ss *SubscriptionsPrices) UpdatePrice(id int, price float64) error {
 	return ss.sr.Prices.UpdatePrice(id, price)
 }
 
-func (ss *SubscriptionsPrices) Delete(id int) error {
+func (ss *SubscriptionsPrices) Delete(id uint) error {
 	if id == 0 {
 		return constants.ErrEmptyFields
 	}

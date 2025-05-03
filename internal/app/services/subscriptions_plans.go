@@ -17,12 +17,20 @@ func (ss *SubscriptionsPlans) GetAll() (plans []*models.SubscriptionPlan, err er
 	return ss.sr.Plans.GetAll()
 }
 
-func (ss *SubscriptionsPlans) Get(id int) (plan *models.SubscriptionPlan, err error) {
+func (ss *SubscriptionsPlans) GetByID(id uint) (plan *models.SubscriptionPlan, err error) {
 	if id == 0 {
 		return nil, constants.ErrEmptyFields
 	}
 
-	return ss.sr.Plans.Get(id)
+	return ss.sr.Plans.GetByID(id)
+}
+
+func (ss *SubscriptionsPlans) GetByDays(days int) (plan *models.SubscriptionPlan, err error) {
+	if days == 0 {
+		return nil, constants.ErrEmptyFields
+	}
+
+	return ss.sr.Plans.GetByDays(days)
 }
 
 func (ss *SubscriptionsPlans) Add(plan *models.SubscriptionPlan) error {
@@ -33,7 +41,7 @@ func (ss *SubscriptionsPlans) Add(plan *models.SubscriptionPlan) error {
 	return ss.sr.Plans.Add(plan)
 }
 
-func (ss *SubscriptionsPlans) Update(id int, newPlan *models.SubscriptionPlan) error {
+func (ss *SubscriptionsPlans) Update(id uint, newPlan *models.SubscriptionPlan) error {
 	if id == 0 || newPlan == nil {
 		return constants.ErrEmptyFields
 	}
@@ -41,7 +49,7 @@ func (ss *SubscriptionsPlans) Update(id int, newPlan *models.SubscriptionPlan) e
 	return ss.sr.Plans.Update(id, newPlan)
 }
 
-func (ss *SubscriptionsPlans) Delete(id int) error {
+func (ss *SubscriptionsPlans) Delete(id uint) error {
 	if id == 0 {
 		return constants.ErrEmptyFields
 	}

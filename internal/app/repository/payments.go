@@ -25,16 +25,24 @@ func NewPayments(log *logger.Logger, db *gorm.DB, cache *cache.Cache) *Payments 
 	}
 }
 
-func (pr *Payments) GetAll(userID int64) (payments []*models.Payment, err error) {
-	cacheKey := fmt.Sprintf("payment:user_id:%d", userID)
-	if err = pr.cache.Get(cacheKey, payments); err == nil {
+func (pr *Payments) GetAll(userID int64, offset, limit int) (payments []*models.Payment, err error) {
+	cacheKey := fmt.Sprintf("payment:user_id:%d:offset:%d:limit:%d", userID, offset, limit)
+	if err = pr.cache.Get(cacheKey, &payments); err == nil {
 		pr.log.Debug("Returning payments from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(payments)), slog.Int64("user_id", userID))
 		return payments, nil
 	}
 
-	payments = make([]*models.Payment, 0)
-	if err = pr.db.Where("user_id = ?", userID).Find(&payments).Error; err != nil {
+	dbQuery := pr.db.Where("user_id = ? AND is_completed = true", userID)
+	if offset > 0 {
+		dbQuery = dbQuery.Offset(offset)
+	}
+	if limit > 0 {
+		dbQuery = dbQuery.Limit(limit)
+	}
+
+	if err = dbQuery.Find(&payments).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			pr.cache.Set(cacheKey, payments, 15*time.Minute)
 			pr.log.Debug("No payments found in database", slog.Int64("user_id", userID))
 			return nil, nil
 		}
@@ -48,16 +56,34 @@ func (pr *Payments) GetAll(userID int64) (payments []*models.Payment, err error)
 	return payments, nil
 }
 
+func (pr *Payments) GetPaymentsCount(userID int64) (count int64, err error) {
+	cacheKey := fmt.Sprintf("payment:user_id:%d:count", userID)
+	if err = pr.cache.Get(cacheKey, &count); err == nil {
+		pr.log.Debug("Returning payments from cache", slog.String("cache_key", cacheKey), slog.Int64("count", count), slog.Int64("user_id", userID))
+		return count, nil
+	}
+
+	err = pr.db.Model(&models.Payment{}).Where("user_id = ? AND is_completed = true", userID).Count(&count).Error
+	if err != nil {
+		pr.log.Error("Failed to get count from db", err)
+		return 0, err
+	}
+
+	pr.cache.Set(cacheKey, count, 15*time.Minute)
+	pr.log.Debug("Returning count payments from db", slog.String("cache_key", cacheKey), slog.Int64("count", count), slog.Int64("user_id", userID))
+	return count, err
+}
+
 func (pr *Payments) Get(userID int64, payload string) (payment *models.Payment, err error) {
 	cacheKey := fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload)
-	if err = pr.cache.Get(cacheKey, payment); err == nil {
+	if err = pr.cache.Get(cacheKey, &payment); err == nil {
 		pr.log.Debug("Returning payment from cache", slog.String("cache_key", cacheKey), slog.Int64("user_id", userID), slog.String("payload", payload))
 		return payment, nil
 	}
 
-	payment = &models.Payment{}
 	if err = pr.db.Where("user_id = ? AND payload = ?", userID, payload).Order("id DESC").First(&payment).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			pr.cache.Set(cacheKey, payment, 15*time.Minute)
 			pr.log.Debug("Payment not found in database", slog.Int64("user_id", userID), slog.String("payload", payload))
 			return nil, nil
 		}
@@ -77,7 +103,7 @@ func (pr *Payments) Add(payment *models.Payment) error {
 		return err
 	}
 
-	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d", payment.UserID))
+	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", payment.UserID), fmt.Sprintf("payment:user_id:%d:count", payment.UserID))
 	pr.log.Debug("Added new payment in db", slog.Int64("user_id", payment.UserID), slog.String("payload", payment.Payload))
 	return nil
 }
@@ -112,7 +138,7 @@ func (pr *Payments) Update(userID int64, payload string, newPayment *models.Paym
 		return err
 	}
 
-	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
+	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
 	pr.log.Debug("Successfully updated payment", slog.Int64("user_id", userID), slog.String("payload", payload))
 	return nil
 }
@@ -125,7 +151,7 @@ func (pr *Payments) UpdateIsCompleted(userID int64, payload string, isCompleted 
 		return err
 	}
 
-	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
+	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
 	pr.log.Debug("Successfully updated is_completed", slog.Int64("user_id", userID), slog.String("payload", payload), slog.Bool("is_completed", isCompleted))
 	return nil
 }
@@ -136,7 +162,7 @@ func (pr *Payments) Delete(userID int64, payload string) error {
 		return err
 	}
 
-	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
+	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
 	pr.log.Debug("Deleted payment from db", slog.Int64("user_id", userID), slog.String("payload", payload))
 	return nil
 }

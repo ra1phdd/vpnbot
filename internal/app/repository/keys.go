@@ -27,14 +27,14 @@ func NewKeys(log *logger.Logger, db *gorm.DB, cache *cache.Cache) *Keys {
 
 func (kr *Keys) GetAll(userID int64) (keys []*models.Key, err error) {
 	cacheKey := fmt.Sprintf("key:user_id:%d", userID)
-	if err = kr.cache.Get(cacheKey, keys); err == nil {
+	if err = kr.cache.Get(cacheKey, &keys); err == nil {
 		kr.log.Debug("Returning keys from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(keys)), slog.Int64("user_id", userID))
 		return keys, nil
 	}
 
-	keys = make([]*models.Key, 0)
 	if err = kr.db.Preload("Country").Where("user_id = ?", userID).Order("id DESC").Limit(1).First(&keys).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			kr.cache.Set(cacheKey, keys, 15*time.Minute)
 			kr.log.Debug("No keys found in database", slog.Int64("user_id", userID))
 			return nil, nil
 		}
@@ -48,50 +48,50 @@ func (kr *Keys) GetAll(userID int64) (keys []*models.Key, err error) {
 	return keys, nil
 }
 
-func (kr *Keys) Get(countryID int, userID int64) (key *models.Key, err error) {
+func (kr *Keys) Get(countryID uint, userID int64) (key *models.Key, err error) {
 	cacheKey := fmt.Sprintf("key:user_id:%d:country_id:%d", userID, countryID)
-	if err = kr.cache.Get(cacheKey, key); err == nil {
-		kr.log.Debug("Returning key from cache", slog.String("cache_key", cacheKey), slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+	if err = kr.cache.Get(cacheKey, &key); err == nil {
+		kr.log.Debug("Returning key from cache", slog.String("cache_key", cacheKey), slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 		return key, nil
 	}
 
-	key = &models.Key{}
 	if err = kr.db.Preload("Country").Where("country_id = ? AND user_id = ?", countryID, userID).Order("id DESC").First(&key).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			kr.log.Debug("Key not found in database", slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+			kr.cache.Set(cacheKey, key, 15*time.Minute)
+			kr.log.Debug("Key not found in database", slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 			return nil, nil
 		}
 
-		kr.log.Error("Failed to get key from db", err, slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+		kr.log.Error("Failed to get key from db", err, slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 		return nil, err
 	}
 
 	kr.cache.Set(cacheKey, key, 15*time.Minute)
-	kr.log.Debug("Returning key from db", slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+	kr.log.Debug("Returning key from db", slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 	return key, nil
 }
 
 func (kr *Keys) Add(key *models.Key) error {
 	if err := kr.db.Create(&key).Error; err != nil {
-		kr.log.Error("Failed to create key in db", err, slog.Int("country_id", key.CountryID), slog.Int64("user_id", key.UserID))
+		kr.log.Error("Failed to create key in db", err, slog.Uint64("country_id", uint64(key.CountryID)), slog.Int64("user_id", key.UserID))
 		return err
 	}
 
 	kr.cache.Delete(fmt.Sprintf("key:user_id:%d", key.UserID), fmt.Sprintf("key:user_id:%d:country_id:%d", key.UserID, key.CountryID))
-	kr.log.Debug("Added new key in db", slog.Int("country_id", key.CountryID), slog.Int64("user_id", key.UserID))
+	kr.log.Debug("Added new key in db", slog.Uint64("country_id", uint64(key.CountryID)), slog.Int64("user_id", key.UserID))
 	return nil
 }
 
-func (kr *Keys) Update(countryID int, userID int64, newKey *models.Key) error {
+func (kr *Keys) Update(countryID uint, userID int64, newKey *models.Key) error {
 	key, err := kr.Get(countryID, userID)
 	if err != nil {
-		kr.log.Error("Failed to get key for update", err, slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+		kr.log.Error("Failed to get key for update", err, slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 		return err
 	}
 
 	tx := kr.db.Begin()
 	if tx.Error != nil {
-		kr.log.Error("Failed to begin transaction", tx.Error, slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+		kr.log.Error("Failed to begin transaction", tx.Error, slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 		return tx.Error
 	}
 
@@ -113,33 +113,33 @@ func (kr *Keys) Update(countryID int, userID int64, newKey *models.Key) error {
 	}
 
 	if err = tx.Commit().Error; err != nil {
-		kr.log.Error("Failed to commit transaction", err, slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+		kr.log.Error("Failed to commit transaction", err, slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 		return err
 	}
 
 	kr.cache.Delete(fmt.Sprintf("key:user_id:%d", key.UserID), fmt.Sprintf("key:user_id:%d:country_id:%d", key.UserID, key.CountryID))
-	kr.log.Debug("Successfully updated key", slog.Int("country_id", countryID), slog.Int64("user_id", userID), slog.Any("updatedFields", newKey))
+	kr.log.Debug("Successfully updated key", slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID), slog.Any("updatedFields", newKey))
 	return nil
 }
 
-func (kr *Keys) UpdateIsActive(countryID int, userID int64, isActive bool) error {
+func (kr *Keys) UpdateIsActive(countryID uint, userID int64, isActive bool) error {
 	if err := kr.db.Model(&models.Key{}).Where("country_id = ? AND user_id = ?", countryID, userID).Update("is_active", isActive).Error; err != nil {
-		kr.log.Error("Failed to update is_active", err, slog.Int("country_id", countryID), slog.Int64("user_id", userID), slog.Bool("is_active", isActive))
+		kr.log.Error("Failed to update is_active", err, slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID), slog.Bool("is_active", isActive))
 		return err
 	}
 
 	kr.cache.Delete(fmt.Sprintf("key:user_id:%d", userID), fmt.Sprintf("key:user_id:%d:country_id:%d", userID, countryID))
-	kr.log.Debug("Successfully updated key", slog.Int("country_id", countryID), slog.Int64("user_id", userID), slog.Bool("is_active", isActive))
+	kr.log.Debug("Successfully updated key", slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID), slog.Bool("is_active", isActive))
 	return nil
 }
 
-func (kr *Keys) Delete(countryID int, userID int64) error {
+func (kr *Keys) Delete(countryID uint, userID int64) error {
 	if err := kr.db.Where("country_id = ? AND user_id = ?", countryID, userID).Delete(&models.Key{}).Error; err != nil {
-		kr.log.Error("Failed to delete key", err, slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+		kr.log.Error("Failed to delete key", err, slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 		return err
 	}
 
 	kr.cache.Delete(fmt.Sprintf("key:user_id:%d", userID), fmt.Sprintf("key:user_id:%d:country_id:%d", userID, countryID))
-	kr.log.Debug("Deleted key from db", slog.Int("country_id", countryID), slog.Int64("user_id", userID))
+	kr.log.Debug("Deleted key from db", slog.Uint64("country_id", uint64(countryID)), slog.Int64("user_id", userID))
 	return nil
 }

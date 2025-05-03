@@ -26,14 +26,14 @@ func NewCountry(log *logger.Logger, db *gorm.DB, cache *cache.Cache) *Country {
 
 func (cr *Country) GetAll() (countries []*models.Country, err error) {
 	cacheKey := "country:all"
-	if err = cr.cache.Get(cacheKey, countries); err == nil {
+	if err = cr.cache.Get(cacheKey, &countries); err == nil {
 		cr.log.Debug("Returning countries from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(countries)))
 		return countries, nil
 	}
 
-	countries = make([]*models.Country, 0)
 	if err = cr.db.Find(&countries).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			cr.cache.Set(cacheKey, countries, 15*time.Minute)
 			cr.log.Debug("No countries found in database")
 			return nil, nil
 		}
@@ -49,14 +49,14 @@ func (cr *Country) GetAll() (countries []*models.Country, err error) {
 
 func (cr *Country) Get(code string) (country *models.Country, err error) {
 	cacheKey := "country:" + code
-	if err = cr.cache.Get(cacheKey, country); err == nil {
+	if err = cr.cache.Get(cacheKey, &country); err == nil {
 		cr.log.Debug("Returning country from cache", slog.String("cache_key", cacheKey), slog.Any("country", country))
 		return country, nil
 	}
 
-	country = &models.Country{}
 	if err = cr.db.Where("code = ?", code).Order("id DESC").First(&country).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			cr.cache.Set(cacheKey, country, 15*time.Minute)
 			cr.log.Debug("Country not found in database", slog.String("code", code))
 			return nil, nil
 		}
@@ -70,14 +70,14 @@ func (cr *Country) Get(code string) (country *models.Country, err error) {
 	return country, nil
 }
 
-func (cr *Country) Add(country *models.Country) (int, error) {
+func (cr *Country) Add(country *models.Country) (uint, error) {
 	if err := cr.db.Create(&country).Error; err != nil {
 		cr.log.Error("Failed to create country in db", err, slog.String("code", country.Code))
 		return 0, err
 	}
 
 	cr.cache.Delete("country:all")
-	cr.log.Debug("Added new country in db", slog.String("code", country.Code), slog.Int("id", country.ID))
+	cr.log.Debug("Added new country in db", slog.String("code", country.Code), slog.Uint64("id", uint64(country.ID)))
 	return country.ID, nil
 }
 
@@ -115,6 +115,10 @@ func (cr *Country) Update(code string, newCountry *models.Country) error {
 		return err
 	}
 	if err = updateField(cr.log, tx, country, "public_key", country.PublicKey, newCountry.PublicKey); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err = updateField(cr.log, tx, country, "flow", country.Flow, newCountry.Flow); err != nil {
 		tx.Rollback()
 		return err
 	}

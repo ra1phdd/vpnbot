@@ -21,7 +21,6 @@ import (
 type ServerConnection struct {
 	conn *grpc.ClientConn
 	mu   sync.Mutex
-	ctx  context.Context
 	serv *models.Server
 }
 
@@ -42,13 +41,7 @@ func NewAPI(log *logger.Logger) *API {
 func (a *API) EnsureConnection(serv *models.Server) (context.Context, error) {
 	data, exists := a.servers[fmt.Sprintf("%s:%d", serv.IP, serv.Port)]
 	if !exists {
-		authKey := sha256.Sum256([]byte(fmt.Sprintf("%s%s", serv.Country.PublicKey, serv.Country.PrivateKey)))
-
 		data = &ServerConnection{
-			ctx: metadata.AppendToOutgoingContext(
-				context.Background(),
-				"X-AUTH-KEY", hex.EncodeToString(authKey[:]),
-			),
 			serv: serv,
 		}
 		a.servers[fmt.Sprintf("%s:%d", serv.IP, serv.Port)] = data
@@ -57,11 +50,17 @@ func (a *API) EnsureConnection(serv *models.Server) (context.Context, error) {
 	data.mu.Lock()
 	defer data.mu.Unlock()
 
+	authKey := sha256.Sum256([]byte(fmt.Sprintf("%s%s", serv.Country.PublicKey, serv.Country.PrivateKey)))
+	ctx := metadata.AppendToOutgoingContext(
+		context.Background(),
+		"X-AUTH-KEY", hex.EncodeToString(authKey[:]),
+	)
+
 	if data.conn != nil {
 		a.log.Debug("Checking existing gRPC connection state")
 		if data.conn.GetState() != connectivity.Shutdown {
 			a.log.Debug("gRPC connection is already active")
-			return data.ctx, nil
+			return ctx, nil
 		}
 
 		a.log.Warn("gRPC connection is shutdown, attempting to close the connection")
@@ -82,5 +81,5 @@ func (a *API) EnsureConnection(serv *models.Server) (context.Context, error) {
 	a.client = pbClient.NewClientServiceClient(data.conn)
 
 	a.log.Debug("Successfully established gRPC connection to API server", slog.String("address", fmt.Sprintf("%s:%d", serv.IP, serv.Port)))
-	return data.ctx, nil
+	return ctx, nil
 }

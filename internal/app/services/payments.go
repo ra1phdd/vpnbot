@@ -2,6 +2,7 @@ package services
 
 import (
 	"gopkg.in/telebot.v4"
+	"math"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
@@ -12,21 +13,31 @@ import (
 type Payments struct {
 	log *logger.Logger
 	pr  *repository.Payments
+	cr  *repository.Currency
 }
 
-func NewPayments(log *logger.Logger, pr *repository.Payments) *Payments {
+func NewPayments(log *logger.Logger, pr *repository.Payments, cr *repository.Currency) *Payments {
 	return &Payments{
 		log: log,
 		pr:  pr,
+		cr:  cr,
 	}
 }
 
-func (ps *Payments) GetAll(userID int64) (payments []*models.Payment, err error) {
+func (ps *Payments) GetAll(userID int64, offset, limit int) (payments []*models.Payment, err error) {
 	if userID == 0 {
 		return nil, constants.ErrEmptyFields
 	}
 
-	return ps.pr.GetAll(userID)
+	return ps.pr.GetAll(userID, offset, limit)
+}
+
+func (ps *Payments) GetPaymentsCount(userID int64) (int64, error) {
+	if userID == 0 {
+		return 0, constants.ErrEmptyFields
+	}
+
+	return ps.pr.GetPaymentsCount(userID)
 }
 
 func (ps *Payments) Get(userID int64, payload string) (payment *models.Payment, err error) {
@@ -69,16 +80,17 @@ func (ps *Payments) Delete(userID int64, payload string) error {
 	return ps.pr.Delete(userID, payload)
 }
 
-func (ps *Payments) CreateTelegramInvoice(amount float64, title, description, payload string) telebot.Invoice {
+func (ps *Payments) CreateInvoice(amount float64, title, description, currency, providerToken, payload string) telebot.Invoice {
 	return telebot.Invoice{
 		Title:       title,
 		Description: description,
 		Payload:     payload,
-		Currency:    "XTR",
+		Currency:    currency,
+		Token:       providerToken,
 		Prices: []telebot.Price{
 			{
-				Label:  "XTR",
-				Amount: int(amount),
+				Label:  "К оплате",
+				Amount: int(math.Round(amount)),
 			},
 		},
 	}

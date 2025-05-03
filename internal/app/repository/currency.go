@@ -26,14 +26,14 @@ func NewCurrency(log *logger.Logger, db *gorm.DB, cache *cache.Cache) *Currency 
 
 func (cr *Currency) GetAll() (currencies []*models.Currency, err error) {
 	cacheKey := "currency:all"
-	if err = cr.cache.Get(cacheKey, currencies); err == nil {
+	if err = cr.cache.Get(cacheKey, &currencies); err == nil {
 		cr.log.Debug("Returning currencies from cache", slog.String("cache_key", cacheKey), slog.Int("count", len(currencies)))
 		return currencies, nil
 	}
 
-	currencies = make([]*models.Currency, 0)
 	if err = cr.db.Find(&currencies).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			cr.cache.Set(cacheKey, currencies, 15*time.Minute)
 			cr.log.Debug("No currencies found in database")
 			return nil, nil
 		}
@@ -49,14 +49,14 @@ func (cr *Currency) GetAll() (currencies []*models.Currency, err error) {
 
 func (cr *Currency) Get(code string) (currency *models.Currency, err error) {
 	cacheKey := "currency:" + code
-	if err = cr.cache.Get(cacheKey, currency); err == nil {
+	if err = cr.cache.Get(cacheKey, &currency); err == nil {
 		cr.log.Debug("Returning currency from cache", slog.String("cache_key", cacheKey), slog.Any("currency", currency))
 		return currency, nil
 	}
 
-	currency = &models.Currency{}
 	if err = cr.db.Where("code = ?", code).Order("id DESC").First(&currency).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			cr.cache.Set(cacheKey, currency, 15*time.Minute)
 			cr.log.Debug("Currency not found in database", slog.String("code", code))
 			return nil, nil
 		}
@@ -70,13 +70,36 @@ func (cr *Currency) Get(code string) (currency *models.Currency, err error) {
 	return currency, nil
 }
 
-func (cr *Currency) Add(currency *models.Currency) (int, error) {
+func (cr *Currency) GetIsBase() (currency *models.Currency, err error) {
+	cacheKey := "currency:is_base"
+	if err = cr.cache.Get(cacheKey, &currency); err == nil {
+		cr.log.Debug("Returning currency from cache", slog.String("cache_key", cacheKey), slog.Any("currency", currency))
+		return currency, nil
+	}
+
+	if err = cr.db.Where("is_base = ?", true).Order("id DESC").First(&currency).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			cr.cache.Set(cacheKey, currency, 15*time.Minute)
+			cr.log.Debug("Currency not found in database")
+			return nil, nil
+		}
+
+		cr.log.Error("Failed to get currency from db", err)
+		return nil, err
+	}
+
+	cr.cache.Set(cacheKey, currency, 15*time.Minute)
+	cr.log.Debug("Returning currency from db")
+	return currency, nil
+}
+
+func (cr *Currency) Add(currency *models.Currency) (uint, error) {
 	if err := cr.db.Create(&currency).Error; err != nil {
 		cr.log.Error("Failed to create currency in db", err, slog.Any("currency", currency))
 		return 0, err
 	}
 
-	cr.cache.Delete("currency:all")
+	cr.cache.Delete("currency:all", "currency:is_base")
 	cr.log.Debug("Added new currency in db", slog.Any("currency", currency))
 	return currency.ID, nil
 }
@@ -112,19 +135,8 @@ func (cr *Currency) Update(code string, newCurrency *models.Currency) error {
 		return err
 	}
 
-	cr.cache.Delete("currency:all", "currency:"+code)
+	cr.cache.Delete("currency:all", "currency:"+code, "currency:is_base")
 	cr.log.Debug("Successfully updated currency", slog.String("code", code), slog.Any("updatedFields", newCurrency))
-	return nil
-}
-
-func (cr *Currency) UpdateIsBase(code string, isBase bool) error {
-	if err := cr.db.Model(&models.Key{}).Where("code = ?", code).Update("is_base", isBase).Error; err != nil {
-		cr.log.Error("Failed to update is_base", err, slog.String("code", code))
-		return err
-	}
-
-	cr.cache.Delete("currency:all", "currency:"+code)
-	cr.log.Debug("Successfully updated currency", slog.String("code", code), slog.Bool("isBase", isBase))
 	return nil
 }
 
@@ -134,7 +146,7 @@ func (cr *Currency) Delete(code string) error {
 		return err
 	}
 
-	cr.cache.Delete("currency:all", "currency:"+code)
+	cr.cache.Delete("currency:all", "currency:"+code, "currency:is_base")
 	cr.log.Debug("Deleted currency from db", slog.String("code", code))
 	return nil
 }

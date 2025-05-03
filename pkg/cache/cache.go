@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"nsvpn/pkg/logger"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -37,7 +38,11 @@ func (c *Cache) Set(key string, value any, ttl time.Duration) {
 		c.log.Error("Failed to marshal data to json", err, slog.String("key", key), slog.Any("value", value), slog.Duration("ttl", ttl))
 		return
 	}
-	c.client.Set(context.Background(), key, data, ttl)
+
+	err = c.client.Set(context.Background(), key, data, ttl).Err()
+	if err != nil {
+		c.log.Error("Failed to set key", err, slog.String("key", key), slog.Duration("ttl", ttl))
+	}
 }
 
 func (c *Cache) Delete(keys ...string) {
@@ -45,9 +50,25 @@ func (c *Cache) Delete(keys ...string) {
 		return
 	}
 
-	err := c.client.Del(context.Background(), keys...).Err()
-	if err != nil {
-		c.log.Error("Failed to delete keys from cache", err, slog.Any("keys", keys))
-		return
+	var keysToDelete []string
+	for _, pattern := range keys {
+		if strings.ContainsAny(pattern, "*?[\\") {
+			iter := c.client.Scan(context.Background(), 0, pattern, 0).Iterator()
+			for iter.Next(context.Background()) {
+				keysToDelete = append(keysToDelete, iter.Val())
+			}
+			if err := iter.Err(); err != nil {
+				c.log.Error("SCAN error", err, slog.String("pattern", pattern))
+			}
+		} else {
+			keysToDelete = append(keysToDelete, pattern)
+		}
+	}
+
+	if len(keysToDelete) > 0 {
+		err := c.client.Del(context.Background(), keysToDelete...).Err()
+		if err != nil {
+			c.log.Error("Failed to delete keys", err, slog.Any("keys", keysToDelete))
+		}
 	}
 }

@@ -32,10 +32,10 @@ func (cs *Country) Get(code string) (country *models.Country, err error) {
 	return cs.cr.Get(code)
 }
 
-func (cs *Country) Add(country *models.Country) (int, error) {
+func (cs *Country) Add(country *models.Country) (uint, error) {
 	if country.Code == "" || country.Emoji == "" || country.NameRU == "" || country.NameEN == "" ||
-		country.Domain == "" || country.PrivateKey == "" || country.PublicKey == "" || country.Dest == "" ||
-		country.ServerNames == "" || country.ShortIDs == "" {
+		country.Domain == "" || country.PrivateKey == "" || country.PublicKey == "" || country.Flow == "" ||
+		country.Dest == "" || country.ServerNames == "" || country.ShortIDs == "" {
 		return 0, constants.ErrEmptyFields
 	}
 

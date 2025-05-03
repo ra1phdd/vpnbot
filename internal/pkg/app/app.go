@@ -29,35 +29,35 @@ type App struct {
 
 	countryRepo       *repository.Country
 	currencyRepo      *repository.Currency
+	keysRepo          *repository.Keys
 	paymentsRepo      *repository.Payments
 	promocodesRepo    *repository.Promocodes
 	serversRepo       *repository.Servers
 	subscriptionsRepo *repository.Subscriptions
-	keysRepo          *repository.Keys
 	usersRepo         *repository.Users
 
-	ClientButtons        *services.Buttons
-	ClientButtonsWithSub *services.Buttons
+	clientButtons        *services.Buttons
+	clientButtonsWithSub *services.Buttons
 
 	baseService          *services.Base
+	checkService         *services.Check
 	countryService       *services.Country
 	currencyService      *services.Currency
+	keysService          *services.Keys
 	paymentsService      *services.Payments
 	promocodesService    *services.Promocodes
-	subscriptionsService *services.Subscriptions
 	serversService       *services.Servers
-	keysService          *services.Keys
+	subscriptionsService *services.Subscriptions
 	usersService         *services.Users
-	checkService         *services.Check
 
 	usersMiddleware *middleware.Users
 
 	baseHandler          *handlers.Base
+	keysHandler          *handlers.Keys
 	paymentsHandler      *handlers.Payments
 	promocodesHandler    *handlers.Promocodes
-	subscriptionsHandler *handlers.Subscriptions
 	serversHandler       *handlers.Servers
-	keysHandler          *handlers.Keys
+	subscriptionsHandler *handlers.Subscriptions
 	usersHandler         *handlers.Users
 }
 
@@ -82,17 +82,17 @@ func New() error {
 		return err
 	}
 
-	a.ClientButtons = services.NewButtons(models.ClientButtons, []int{1, 2}, "reply")
-	a.ClientButtonsWithSub = services.NewButtons(models.ClientButtonsWithSub, []int{1, 2}, "reply")
+	a.clientButtons = services.NewButtons(models.ClientButtons, []int{1, 2}, "reply")
+	a.clientButtonsWithSub = services.NewButtons(models.ClientButtonsWithSub, []int{1, 2}, "reply")
 
 	a.api = api.NewAPI(a.log)
 	a.initRepo()
 	a.initServices()
-	a.initMiddlewares()
 	a.initHandlers()
+	a.initMiddlewares()
 
 	go func() {
-		ticker := time.NewTicker(30 * time.Minute)
+		ticker := time.NewTicker(15 * time.Minute)
 		defer ticker.Stop()
 
 		a.checkService.Run()
@@ -170,11 +170,11 @@ func (a *App) initBot() (err error) {
 func (a *App) initRepo() {
 	a.countryRepo = repository.NewCountry(a.log, a.db, a.cache)
 	a.currencyRepo = repository.NewCurrency(a.log, a.db, a.cache)
+	a.keysRepo = repository.NewKeys(a.log, a.db, a.cache)
 	a.paymentsRepo = repository.NewPayments(a.log, a.db, a.cache)
 	a.promocodesRepo = repository.NewPromocodes(a.log, a.db, a.cache)
 	a.serversRepo = repository.NewServers(a.log, a.db, a.cache)
 	a.subscriptionsRepo = repository.NewSubscriptions(a.log, a.db, a.cache)
-	a.keysRepo = repository.NewKeys(a.log, a.db, a.cache)
 	a.usersRepo = repository.NewUsers(a.log, a.db, a.cache)
 }
 
@@ -182,26 +182,27 @@ func (a *App) initServices() {
 	a.baseService = services.NewBase(a.log)
 	a.countryService = services.NewCountry(a.log, a.countryRepo)
 	a.currencyService = services.NewCurrency(a.log, a.currencyRepo)
-	a.paymentsService = services.NewPayments(a.log, a.paymentsRepo)
+	a.paymentsService = services.NewPayments(a.log, a.paymentsRepo, a.currencyRepo)
+	a.promocodesService = services.NewPromocodes(a.log, a.promocodesRepo)
 	a.subscriptionsService = services.NewSubscriptions(a.log, a.subscriptionsRepo)
 	a.usersService = services.NewUsers(a.log, a.usersRepo)
 	a.keysService = services.NewKeys(a.log, a.keysRepo)
 	a.serversService = services.NewServers(a.log, a.serversRepo)
-	a.checkService = services.NewCheck(a.log, a.bot, a.keysService, a.subscriptionsService, a.serversService, a.api, a.ClientButtons)
+	a.checkService = services.NewCheck(a.log, a.bot, a.keysService, a.subscriptionsService, a.serversService, a.usersService, a.api, a.clientButtons)
 }
 
 func (a *App) initMiddlewares() {
-	a.usersMiddleware = middleware.NewUsers(a.log, a.usersRepo, a.subscriptionsService)
+	a.usersMiddleware = middleware.NewUsers(a.log, a.bot, a.usersService, a.subscriptionsService, a.clientButtons, a.clientButtonsWithSub, a.baseHandler)
 }
 
 func (a *App) initHandlers() {
+	a.usersHandler = handlers.NewUsers(a.log, a.usersService)
 	a.keysHandler = handlers.NewKeys(a.log, a.bot, a.keysService, a.serversService, a.subscriptionsService, a.api)
-	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.paymentsService, a.currencyService, a.subscriptionsService, a.usersService, a.ClientButtonsWithSub)
-	a.subscriptionsHandler = handlers.NewSubscriptions(a.log, a.bot, a.subscriptionsService, a.currencyService, a.paymentsService, a.usersService, a.paymentsHandler, a.ClientButtonsWithSub)
-	a.serversHandler = handlers.NewServers(a.log, a.bot, a.subscriptionsService, a.serversService, a.keysHandler, a.countryService, a.api)
-	a.baseHandler = handlers.NewBase(a.log, a.bot, a.ClientButtons, a.ClientButtonsWithSub, a.usersService, a.subscriptionsService, a.paymentsHandler)
+	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.paymentsService, a.currencyService, a.usersService)
+	a.subscriptionsHandler = handlers.NewSubscriptions(a.log, a.bot, a.subscriptionsService, a.countryService, a.currencyService, a.paymentsService, a.usersService, a.paymentsHandler, a.clientButtonsWithSub)
+	a.serversHandler = handlers.NewServers(a.log, a.bot, a.serversService, a.keysHandler, a.countryService, a.api)
+	a.baseHandler = handlers.NewBase(a.log, a.bot, a.usersService, a.subscriptionsHandler, a.paymentsHandler)
 	a.promocodesHandler = handlers.NewPromocodes(a.log, a.promocodesService, a.usersService)
-	a.usersHandler = handlers.NewUsers(a.log)
 }
 
 func (a *App) run() error {
@@ -209,14 +210,11 @@ func (a *App) run() error {
 
 	a.bot.Handle("/start", a.baseHandler.StartHandler)
 	a.bot.Handle("/help", a.baseHandler.HelpHandler)
-	a.bot.Handle("Профиль", a.baseHandler.ProfileHandler)
+	a.bot.Handle("👔 Профиль", a.baseHandler.ProfileHandler)
+	a.bot.Handle("💡 Информация", a.baseHandler.InfoHandler)
+	a.bot.Handle("🔒 Подключить VPN", a.subscriptionsHandler.ChooseDurationHandler)
+	a.bot.Handle("🌐 Список серверов", a.serversHandler.ListCountriesHandler)
 
-	a.bot.Handle("Подключить VPN", a.subscriptionsHandler.ChooseDurationHandler)
-	a.bot.Handle(telebot.OnCheckout, a.paymentsHandler.PreCheckoutHandler)
-
-	a.bot.Handle("Список серверов", a.serversHandler.ListCountriesHandler)
-
-	a.bot.Handle("Назад", a.baseHandler.StartHandler)
 	a.bot.Handle(telebot.OnText, a.baseHandler.OnTextHandler)
 
 	a.bot.Start()
