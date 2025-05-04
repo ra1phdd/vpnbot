@@ -54,22 +54,26 @@ func (k *Keys) GetKeyHandler(c telebot.Context, country *models.Country) error {
 	}
 
 	email := fmt.Sprintf("nsvpn-%d-%s", c.Sender().ID, strings.ToLower(country.Code))
-	k.processServers(servers, func(server *models.Server) {
+	err = k.processServers(servers, func(server *models.Server) error {
 		found, err := k.api.IsFoundRequest(server, key.UUID)
 		if err != nil {
 			k.log.Error("Failed check if request", err)
-			return
+			return err
 		}
-
 		if found {
-			return
+			return nil
 		}
 
 		if err := k.api.AddRequest(server, key.UUID, email, sub.EndDate); err != nil {
 			k.log.Error("Failed add request", err)
-			return
+			return err
 		}
+
+		return nil
 	})
+	if err != nil {
+		return c.Send(constants.UserError, btns)
+	}
 
 	updateBtn := services.NewButtons([]models.ButtonOption{{
 		Value:   "update_" + key.UUID,
@@ -102,16 +106,22 @@ func (k *Keys) UpdateKeyHandler(c telebot.Context, country *models.Country, serv
 		return c.Send(constants.UserError, btns)
 	}
 
-	k.processServers(servers, func(server *models.Server) {
+	err = k.processServers(servers, func(server *models.Server) error {
 		if err := k.api.DeleteRequest(server, u); err != nil && err.Error() != "record not found" {
 			k.log.Error("Failed delete request", err)
-			return
+			return err
 		}
 
 		if err := k.api.AddRequest(server, newUUID, email, endDate); err != nil {
 			k.log.Error("Failed add request", err)
+			return err
 		}
+
+		return nil
 	})
+	if err != nil {
+		return c.Send(constants.UserError, btns)
+	}
 
 	if err = k.ks.Delete(country.ID, c.Sender().ID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		k.log.Error("Failed delete request", err)
@@ -157,14 +167,25 @@ func (k *Keys) getOrCreateKey(userID int64, countryID uint) (*models.Key, error)
 	return newKey, nil
 }
 
-func (k *Keys) processServers(servers []*models.Server, process func(server *models.Server)) {
+func (k *Keys) processServers(servers []*models.Server, process func(server *models.Server) error) error {
 	var wg sync.WaitGroup
+	var errs []error
 	for _, server := range servers {
 		wg.Add(1)
 		go func(server *models.Server) {
 			defer wg.Done()
-			process(server)
+			if err := process(server); err != nil {
+				errs = append(errs, err)
+			}
 		}(server)
 	}
 	wg.Wait()
+
+	if len(errs) > 0 {
+		for _, err := range errs {
+			k.log.Error("Failed process servers", err)
+		}
+		return constants.ErrProcessServers
+	}
+	return nil
 }

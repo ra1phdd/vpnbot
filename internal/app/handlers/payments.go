@@ -5,6 +5,7 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/telebot.v4"
 	"math"
+	"nsvpn/internal/app/config"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
@@ -15,6 +16,7 @@ import (
 type Payments struct {
 	log    *logger.Logger
 	bot    *telebot.Bot
+	cfg    *config.Configuration
 	cs     *services.Currency
 	pcodes *services.Promocodes
 	ps     *services.Payments
@@ -22,10 +24,11 @@ type Payments struct {
 	ph     *Promocodes
 }
 
-func NewPayments(log *logger.Logger, bot *telebot.Bot, pcodes *services.Promocodes, ps *services.Payments, cs *services.Currency, us *services.Users, ph *Promocodes) *Payments {
+func NewPayments(log *logger.Logger, bot *telebot.Bot, cfg *config.Configuration, pcodes *services.Promocodes, ps *services.Payments, cs *services.Currency, us *services.Users, ph *Promocodes) *Payments {
 	return &Payments{
 		log:    log,
 		bot:    bot,
+		cfg:    cfg,
 		cs:     cs,
 		pcodes: pcodes,
 		ps:     ps,
@@ -98,10 +101,10 @@ func (p *Payments) ChooseCurrencyHandler(c telebot.Context, amount float64, payl
 	}
 
 	p.bot.Handle(chooseBtns.GetBtn("pay_bankcard"), func(c telebot.Context) error {
-		return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "RUB")
+		return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, p.cfg.YoukassaAPI, note, "RUB")
 	})
 	p.bot.Handle(chooseBtns.GetBtn("pay_stars"), func(c telebot.Context) error {
-		return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "XTR")
+		return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, "", note, "XTR")
 	})
 	p.bot.Handle(chooseBtns.GetBtn("pay_cryptocurrency"), func(c telebot.Context) error {
 		//return p.CryptoPaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "USD")
@@ -111,7 +114,7 @@ func (p *Payments) ChooseCurrencyHandler(c telebot.Context, amount float64, payl
 	return c.Send(msg, chooseBtns.AddBtns())
 }
 
-func (p *Payments) PaymentHandler(c telebot.Context, amount float64, description, payload, note, currencyCode string) error {
+func (p *Payments) PaymentHandler(c telebot.Context, amount float64, description, payload, providerToken, note, currencyCode string) error {
 	promocodeID, discount, err := p.ph.RequestPromocodeHandler(c)
 	if err != nil {
 		p.log.Error("Failed to request promocode handler", err)
@@ -147,13 +150,43 @@ func (p *Payments) PaymentHandler(c telebot.Context, amount float64, description
 	p.bot.Handle(telebot.OnCheckout, func(c telebot.Context) error {
 		return p.PreCheckoutHandler(c, amount, promocodeID)
 	})
-	invoice := p.ps.CreateInvoice(math.Round(invoiceAmount*currency.ExchangeRate), "Оплата", description, currency.Code, "", payload)
+	invoice := p.ps.CreateInvoice(math.Round(invoiceAmount*currency.ExchangeRate), "Оплата", description, "kneshkreba@mail.ru", currency.Code, providerToken, payload)
+	fmt.Println(invoice)
 	return c.Send(&invoice)
 }
 
 func (p *Payments) PreCheckoutHandler(c telebot.Context, amount float64, promocodeID uint) error {
+	p.log.Info("PreCheckout received", "user", c.Sender().ID, "payload", c.PreCheckoutQuery().Payload, "amount", c.PreCheckoutQuery().Total)
+
 	btns := getReplyButtons(c)
-	err := p.ps.UpdateIsCompleted(c.Sender().ID, c.PreCheckoutQuery().Payload, true)
+	err := p.bot.Accept(c.PreCheckoutQuery())
+	if err != nil {
+		p.log.Error("Failed update isCompleted", err)
+
+		err := p.ps.UpdateIsCompleted(c.Sender().ID, c.PreCheckoutQuery().Payload, false)
+		if err != nil {
+			p.log.Error("Failed update isCompleted", err)
+		}
+
+		err = p.us.DecrementBalance(c.Sender().ID, amount)
+		if err != nil {
+			p.log.Error("Failed update isCompleted", err)
+		}
+
+		return c.Send(constants.UserError, btns)
+	}
+
+	p.bot.Handle(telebot.OnPayment, func(c telebot.Context) error {
+		return p.SuccessfulPaymentHandler(c, amount, promocodeID)
+	})
+
+	p.log.Info("PreCheckout accepted, waiting for payment confirmation")
+	return nil
+}
+
+func (p *Payments) SuccessfulPaymentHandler(c telebot.Context, amount float64, promocodeID uint) error {
+	btns := getReplyButtons(c)
+	err := p.ps.UpdateIsCompleted(c.Sender().ID, c.Payment().Payload, true)
 	if err != nil {
 		p.log.Error("Failed update isCompleted", err)
 		return c.Send(constants.UserError, btns)
@@ -164,22 +197,6 @@ func (p *Payments) PreCheckoutHandler(c telebot.Context, amount float64, promoco
 		p.log.Error("Failed update isCompleted", err)
 		return c.Send(constants.UserError, btns)
 	}
-
-	//err = p.bot.Accept(c.PreCheckoutQuery())
-	//if err != nil {
-	//	err := p.ps.UpdateIsCompleted(c.Sender().ID, c.PreCheckoutQuery().Payload, false)
-	//	if err != nil {
-	//		p.log.Error("Failed update isCompleted", err)
-	//	}
-	//
-	//	err = p.us.DecrementBalance(c.Sender().ID, amount)
-	//	if err != nil {
-	//		p.log.Error("Failed update isCompleted", err)
-	//	}
-	//
-	//	p.log.Error("Failed update isCompleted", err)
-	//	return c.Send(constants.UserError, btns)
-	//}
 
 	user, err := p.us.Get(c.Sender().ID)
 	if err != nil {
@@ -203,17 +220,19 @@ func (p *Payments) PreCheckoutHandler(c telebot.Context, amount float64, promoco
 		}
 	}
 
-	err = p.pcodes.Activations.Add(&models.PromocodeActivations{
-		PromocodeID: promocodeID,
-		UserID:      c.Sender().ID,
-	})
-	if err != nil {
-		p.log.Error("Failed to activate promocode", err)
-	}
+	if promocodeID != 0 {
+		err = p.pcodes.Activations.Add(&models.PromocodeActivations{
+			PromocodeID: promocodeID,
+			UserID:      c.Sender().ID,
+		})
+		if err != nil {
+			p.log.Error("Failed to activate promocode", err)
+		}
 
-	err = p.pcodes.IncrementActivationsByID(promocodeID)
-	if err != nil {
-		p.log.Error("Failed to increment activations promocode", err)
+		err = p.pcodes.IncrementActivationsByID(promocodeID)
+		if err != nil {
+			p.log.Error("Failed to increment activations promocode", err)
+		}
 	}
 
 	return c.Send("✅ Платёж успешно завершен!", btns)

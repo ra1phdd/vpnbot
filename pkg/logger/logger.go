@@ -60,8 +60,8 @@ func New() *Logger {
 
 	logFile := &lumberjack.Logger{
 		Filename:   "logs/main.log",
-		MaxSize:    32,
-		MaxBackups: 5,
+		MaxSize:    64,
+		MaxBackups: 32,
 		MaxAge:     30,
 		Compress:   true,
 	}
@@ -140,5 +140,34 @@ func (l *Logger) Error(msg string, err error, args ...any) {
 
 func (l *Logger) Fatal(msg string, err error, args ...any) {
 	l.log.Log(context.Background(), LevelFatal, msg, append([]any{slog.Any("error", err.Error())}, args...)...)
+	os.Exit(1)
+}
+
+func (l *Logger) Tracef(msg string, id int64, args ...any) {
+	l.log.Log(context.Background(), LevelTrace, fmt.Sprintf("[%d] %s", id, msg), args...)
+}
+
+func (l *Logger) Debugf(msg string, id int64, args ...any) {
+	l.log.Debug(fmt.Sprintf("[%d] %s", id, msg), args...)
+}
+
+func (l *Logger) Infof(msg string, id int64, args ...any) {
+	l.log.Info(fmt.Sprintf("[%d] %s", id, msg), args...)
+}
+
+func (l *Logger) Warnf(msg string, id int64, args ...any) {
+	l.log.Warn(fmt.Sprintf("[%d] %s", id, msg), args...)
+}
+
+func (l *Logger) Errorf(msg string, err error, id int64, args ...any) {
+	if err != nil {
+		l.log.Error(fmt.Sprintf("[%d] %s", id, msg), append([]any{slog.Any("error", err.Error())}, args...)...)
+	} else {
+		l.log.Error(fmt.Sprintf("[%d] %s", id, msg), args...)
+	}
+}
+
+func (l *Logger) Fatalf(msg string, err error, id int64, args ...any) {
+	l.log.Log(context.Background(), LevelFatal, fmt.Sprintf("[%d] %s", id, msg), append([]any{slog.Any("error", err.Error())}, args...)...)
 	os.Exit(1)
 }

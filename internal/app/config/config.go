@@ -9,6 +9,7 @@ import (
 
 type Configuration struct {
 	TelegramAPI string `env:"TELEGRAM_API,required"`
+	YoukassaAPI string `env:"YOUKASSA_API,required"`
 	LoggerLevel string `env:"LOGGER_LEVEL" envDefault:"info"`
 	GinMode     string `env:"GIN_MODE" envDefault:"release"`
 	PortAPI     int    `env:"PORT_API" envDefault:"8890"`

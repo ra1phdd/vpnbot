@@ -1,6 +1,8 @@
 package services
 
 import (
+	"encoding/json"
+	"fmt"
 	"gopkg.in/telebot.v4"
 	"math"
 	"nsvpn/internal/app/constants"
@@ -80,8 +82,31 @@ func (ps *Payments) Delete(userID int64, payload string) error {
 	return ps.pr.Delete(userID, payload)
 }
 
-func (ps *Payments) CreateInvoice(amount float64, title, description, currency, providerToken, payload string) telebot.Invoice {
-	return telebot.Invoice{
+type Amount struct {
+	Value    string `json:"value"`
+	Currency string `json:"currency"`
+}
+
+type Item struct {
+	Description    string `json:"description"`
+	Quantity       int    `json:"quantity"`
+	Amount         Amount `json:"amount"`
+	VatCode        int    `json:"vat_code"`
+	Measure        string `json:"measure"`
+	PaymentMode    string `json:"payment_mode"`
+	PaymentSubject string `json:"payment_subject"`
+}
+
+type Receipt struct {
+	Items []Item `json:"items"`
+}
+
+type PaymentData struct {
+	Receipt Receipt `json:"receipt"`
+}
+
+func (ps *Payments) CreateInvoice(amount float64, title, description, email, currency, providerToken, payload string) telebot.Invoice {
+	invoice := telebot.Invoice{
 		Title:       title,
 		Description: description,
 		Payload:     payload,
@@ -94,4 +119,37 @@ func (ps *Payments) CreateInvoice(amount float64, title, description, currency, 
 			},
 		},
 	}
+
+	if currency == "RUB" {
+		receipt := PaymentData{
+			Receipt{
+				Items: []Item{
+					{
+						Description: description,
+						Amount: Amount{
+							Value:    fmt.Sprintf("%.2f", amount),
+							Currency: currency,
+						},
+						VatCode:        2,
+						Quantity:       1,
+						Measure:        "piece",
+						PaymentSubject: "payment",
+						PaymentMode:    "full_payment",
+					},
+				},
+			},
+		}
+
+		jsonData, err := json.Marshal(receipt)
+		if err != nil {
+			ps.log.Error("Failed marshal to json", err)
+		}
+
+		invoice.Prices[0].Amount *= 100
+		invoice.NeedEmail = true
+		invoice.SendEmail = true
+		invoice.Data = string(jsonData)
+	}
+
+	return invoice
 }

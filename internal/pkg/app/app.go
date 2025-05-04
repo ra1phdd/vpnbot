@@ -197,7 +197,7 @@ func (a *App) initMiddlewares() {
 
 func (a *App) initHandlers() {
 	a.promocodesHandler = handlers.NewPromocodes(a.log, a.bot, a.paymentsService, a.promocodesService, a.usersService)
-	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.promocodesService, a.paymentsService, a.currencyService, a.usersService, a.promocodesHandler)
+	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.cfg, a.promocodesService, a.paymentsService, a.currencyService, a.usersService, a.promocodesHandler)
 	a.keysHandler = handlers.NewKeys(a.log, a.bot, a.keysService, a.serversService, a.subscriptionsService, a.api)
 	a.subscriptionsHandler = handlers.NewSubscriptions(a.log, a.bot, a.subscriptionsService, a.countryService, a.currencyService, a.paymentsService, a.usersService, a.paymentsHandler, a.clientButtonsWithSub)
 	a.usersHandler = handlers.NewUsers(a.log, a.bot, a.usersService, a.subscriptionsHandler, a.paymentsHandler)
