@@ -10,6 +10,7 @@ var (
 	ErrEmptyFields        = errors.New("one of the fields is empty")
 	ErrPaymentTimeExpired = errors.New("payment time expired")
 	ErrProcessServers     = errors.New("failed to process servers")
+	ErrCancelPayment      = errors.New("payment is cancelled")
 )
 
 const (

@@ -22,6 +22,10 @@ var ClientButtons = []ButtonOption{
 		Display: "👔 Профиль",
 	},
 	{
+		Value:   "technical_support",
+		Display: "💬 Техподдержка",
+	},
+	{
 		Value:   "info",
 		Display: "💡 Информация",
 	},
@@ -35,6 +39,10 @@ var ClientButtonsWithSub = []ButtonOption{
 	{
 		Value:   "profile",
 		Display: "👔 Профиль",
+	},
+	{
+		Value:   "technical_support",
+		Display: "💬 Техподдержка",
 	},
 	{
 		Value:   "info",

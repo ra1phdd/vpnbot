@@ -9,7 +9,15 @@ import (
 
 type Configuration struct {
 	TelegramAPI string `env:"TELEGRAM_API,required"`
+
+	YoukassaURL string `env:"YOUKASSA_URL,required"`
 	YoukassaAPI string `env:"YOUKASSA_API,required"`
+	YoukassaID  string `env:"YOUKASSA_ID,required"`
+
+	HeleketURL string `env:"HELEKET_URL,required"`
+	HeleketAPI string `env:"HELEKET_API,required"`
+	HeleketID  string `env:"HELEKET_ID,required"`
+
 	LoggerLevel string `env:"LOGGER_LEVEL" envDefault:"info"`
 	GinMode     string `env:"GIN_MODE" envDefault:"release"`
 	PortAPI     int    `env:"PORT_API" envDefault:"8890"`

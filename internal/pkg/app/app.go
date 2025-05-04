@@ -82,8 +82,8 @@ func New() error {
 		return err
 	}
 
-	a.clientButtons = services.NewButtons(models.ClientButtons, []int{1, 2}, "reply")
-	a.clientButtonsWithSub = services.NewButtons(models.ClientButtonsWithSub, []int{1, 2}, "reply")
+	a.clientButtons = services.NewButtons(models.ClientButtons, []int{2, 2}, "reply")
+	a.clientButtonsWithSub = services.NewButtons(models.ClientButtonsWithSub, []int{2, 2}, "reply")
 
 	a.api = api.NewAPI(a.log)
 	a.initRepo()
@@ -182,7 +182,7 @@ func (a *App) initServices() {
 	a.baseService = services.NewBase(a.log)
 	a.countryService = services.NewCountry(a.log, a.countryRepo)
 	a.currencyService = services.NewCurrency(a.log, a.currencyRepo)
-	a.paymentsService = services.NewPayments(a.log, a.paymentsRepo, a.currencyRepo)
+	a.paymentsService = services.NewPayments(a.log, a.cfg, a.paymentsRepo, a.currencyRepo)
 	a.promocodesService = services.NewPromocodes(a.log, a.promocodesRepo)
 	a.subscriptionsService = services.NewSubscriptions(a.log, a.subscriptionsRepo)
 	a.usersService = services.NewUsers(a.log, a.usersRepo)
@@ -210,6 +210,18 @@ func (a *App) run() error {
 
 	a.bot.Handle("/start", a.baseHandler.StartHandler)
 	a.bot.Handle("/help", a.baseHandler.HelpHandler)
+	a.bot.Handle("💬 Техподдержка", func(c telebot.Context) error {
+		menu := &telebot.ReplyMarkup{}
+		menu.Inline(telebot.Row{
+			{
+				Unique: "tech_support",
+				Text:   "Техподдержка",
+				URL:    "https://t.me/nsvpn_support_bot",
+			},
+		})
+
+		return c.Send("💬 Если у вас возникли какие-либо вопросы или проблемы, обратитесь в нашу техподдержку", menu)
+	})
 	a.bot.Handle("💡 Информация", a.baseHandler.InfoHandler)
 	a.bot.Handle("👔 Профиль", a.usersHandler.ProfileHandler)
 	a.bot.Handle("🔒 Подключить VPN", a.subscriptionsHandler.ChooseDurationHandler)
