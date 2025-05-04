@@ -103,7 +103,7 @@ func (pr *Payments) Add(payment *models.Payment) error {
 		return err
 	}
 
-	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", payment.UserID), fmt.Sprintf("payment:user_id:%d:count", payment.UserID))
+	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", payment.UserID))
 	pr.log.Debug("Added new payment in db", slog.Int64("user_id", payment.UserID), slog.String("payload", payment.Payload))
 	return nil
 }
@@ -138,7 +138,7 @@ func (pr *Payments) Update(userID int64, payload string, newPayment *models.Paym
 		return err
 	}
 
-	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
+	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID))
 	pr.log.Debug("Successfully updated payment", slog.Int64("user_id", userID), slog.String("payload", payload))
 	return nil
 }
@@ -151,7 +151,7 @@ func (pr *Payments) UpdateIsCompleted(userID int64, payload string, isCompleted 
 		return err
 	}
 
-	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
+	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID))
 	pr.log.Debug("Successfully updated is_completed", slog.Int64("user_id", userID), slog.String("payload", payload), slog.Bool("is_completed", isCompleted))
 	return nil
 }
@@ -162,7 +162,7 @@ func (pr *Payments) Delete(userID int64, payload string) error {
 		return err
 	}
 
-	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID), fmt.Sprintf("payment:user_id:%d:payload:%s", userID, payload))
+	pr.cache.Delete(fmt.Sprintf("payment:user_id:%d:*", userID))
 	pr.log.Debug("Deleted payment from db", slog.Int64("user_id", userID), slog.String("payload", payload))
 	return nil
 }

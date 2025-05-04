@@ -100,7 +100,7 @@ func (sr *Servers) Add(server *models.Server) error {
 		return err
 	}
 
-	sr.cache.Delete("servers:all")
+	sr.cache.Delete("servers:all", fmt.Sprintf("servers:country_id:%d", server.ID))
 	sr.log.Debug("Added new server in db", slog.Uint64("id", uint64(server.ID)))
 	return nil
 }

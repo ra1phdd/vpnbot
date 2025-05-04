@@ -11,17 +11,31 @@ import (
 type Promocodes struct {
 	log *logger.Logger
 	pr  *repository.Promocodes
+
+	Activations *PromocodesActivations
 }
 
 func NewPromocodes(log *logger.Logger, pr *repository.Promocodes) *Promocodes {
 	return &Promocodes{
 		log: log,
 		pr:  pr,
+		Activations: &PromocodesActivations{
+			log: log,
+			pr:  pr,
+		},
 	}
 }
 
 func (ps *Promocodes) GetAll() (promocodes []*models.Promocode, err error) {
 	return ps.pr.GetAll()
+}
+
+func (ps *Promocodes) GetByID(id uint) (promocode *models.Promocode, err error) {
+	if id == 0 {
+		return nil, constants.ErrEmptyFields
+	}
+
+	return ps.pr.GetByID(id)
 }
 
 func (ps *Promocodes) Get(code string) (promocode *models.Promocode, err error) {
@@ -38,6 +52,14 @@ func (ps *Promocodes) Add(promocode *models.Promocode) error {
 	}
 
 	return ps.pr.Add(promocode)
+}
+
+func (ps *Promocodes) UpdateByID(id uint, newPromocode *models.Promocode) error {
+	if id == 0 || newPromocode == nil {
+		return constants.ErrEmptyFields
+	}
+
+	return ps.pr.UpdateByID(id, newPromocode)
 }
 
 func (ps *Promocodes) Update(code string, newPromocode *models.Promocode) error {
@@ -64,6 +86,14 @@ func (ps *Promocodes) UpdateIsActive(code string, isActive bool) error {
 	return ps.pr.UpdateIsActive(code, isActive)
 }
 
+func (ps *Promocodes) IncrementActivationsByID(id uint) error {
+	if id == 0 {
+		return constants.ErrEmptyFields
+	}
+
+	return ps.pr.IncrementActivationsByID(id)
+}
+
 func (ps *Promocodes) Delete(code string) error {
 	if code == "" {
 		return constants.ErrEmptyFields
@@ -83,7 +113,7 @@ func (ps *Promocodes) IsWork(code string, isNewUsers bool) bool {
 		return false
 	}
 
-	if data.OnlyNewUsers != isNewUsers || !data.IsActive || data.CurrentActivations > *data.TotalActivations {
+	if data.OnlyNewUsers != isNewUsers || !data.IsActive || data.CurrentActivations > data.TotalActivations {
 		return false
 	}
 

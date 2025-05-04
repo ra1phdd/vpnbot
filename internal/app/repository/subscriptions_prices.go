@@ -69,7 +69,7 @@ func (sr *SubscriptionsPrices) Add(price *models.SubscriptionPrice) error {
 		return err
 	}
 
-	sr.cache.Delete(fmt.Sprintf("subscription_price:%d", price.ID), "subscription_price:all")
+	sr.cache.Delete("subscription_price:all")
 	sr.log.Debug("Added new subscription price in db", slog.Uint64("id", uint64(price.ID)))
 	return nil
 }

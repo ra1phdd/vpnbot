@@ -77,7 +77,7 @@ func (kr *Keys) Add(key *models.Key) error {
 		return err
 	}
 
-	kr.cache.Delete(fmt.Sprintf("key:user_id:%d", key.UserID), fmt.Sprintf("key:user_id:%d:country_id:%d", key.UserID, key.CountryID))
+	kr.cache.Delete(fmt.Sprintf("key:user_id:%d", key.UserID))
 	kr.log.Debug("Added new key in db", slog.Uint64("country_id", uint64(key.CountryID)), slog.Int64("user_id", key.UserID))
 	return nil
 }

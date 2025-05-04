@@ -40,7 +40,11 @@ func (u *Users) IsUser(next telebot.HandlerFunc) telebot.HandlerFunc {
 			return err
 		}
 
-		u.updateUserIfNeeded(c, user)
+		if user.Username != c.Sender().Username || user.Firstname != c.Sender().FirstName || user.Lastname != c.Sender().LastName {
+			if err := u.us.Update(c.Sender().ID, user); err != nil {
+				u.log.Error("Error while updating user", err)
+			}
+		}
 		c.Set("user", user)
 
 		if shouldCheckSign(user, c) {
@@ -105,16 +109,6 @@ func (u *Users) parsePartnerID(data string) int64 {
 		return 0
 	}
 	return parsedID
-}
-
-func (u *Users) updateUserIfNeeded(c telebot.Context, user *models.User) {
-	if user.Username != c.Sender().Username ||
-		user.Firstname != c.Sender().FirstName ||
-		user.Lastname != c.Sender().LastName {
-		if err := u.us.Update(c.Sender().ID, user); err != nil {
-			u.log.Error("Error while updating user", err)
-		}
-	}
 }
 
 func shouldCheckSign(user *models.User, c telebot.Context) bool {

@@ -13,20 +13,24 @@ import (
 )
 
 type Payments struct {
-	log *logger.Logger
-	bot *telebot.Bot
-	cs  *services.Currency
-	ps  *services.Payments
-	us  *services.Users
+	log    *logger.Logger
+	bot    *telebot.Bot
+	cs     *services.Currency
+	pcodes *services.Promocodes
+	ps     *services.Payments
+	us     *services.Users
+	ph     *Promocodes
 }
 
-func NewPayments(log *logger.Logger, bot *telebot.Bot, ps *services.Payments, cs *services.Currency, us *services.Users) *Payments {
+func NewPayments(log *logger.Logger, bot *telebot.Bot, pcodes *services.Promocodes, ps *services.Payments, cs *services.Currency, us *services.Users, ph *Promocodes) *Payments {
 	return &Payments{
-		log: log,
-		bot: bot,
-		cs:  cs,
-		ps:  ps,
-		us:  us,
+		log:    log,
+		bot:    bot,
+		cs:     cs,
+		pcodes: pcodes,
+		ps:     ps,
+		us:     us,
+		ph:     ph,
 	}
 }
 
@@ -37,22 +41,27 @@ func (p *Payments) RequestAmount(c telebot.Context, payload, note string) error 
 		return c.Send(constants.UserError, btns)
 	}
 
-	err = c.EditOrSend(fmt.Sprintf("💳 Введите сумму в %s:", baseCurrency.Code))
+	err = c.Send(fmt.Sprintf("💳 Введите сумму в %s:", baseCurrency.Code))
 	if err != nil {
 		return c.Send(constants.UserError, btns)
 	}
 
+	resultChan := make(chan float64)
 	p.bot.Handle(telebot.OnText, func(c telebot.Context) error {
 		amount, err := strconv.ParseFloat(c.Text(), 64)
 		if err != nil || amount < 1 {
 			return c.Send("❌ Некорректная сумма, попробуйте ещё раз", btns)
 		}
+		resultChan <- amount
 
-		p.bot.Handle(telebot.OnText, nil)
-		return p.ChooseCurrencyHandler(c, math.Round(amount), payload, note, false)
+		p.bot.Handle(telebot.OnText, func(c telebot.Context) error {
+			return c.Send("🤔 Неизвестная команда. Используйте /help для получения списка команд", btns)
+		})
+		return nil
 	})
 
-	return nil
+	amount := <-resultChan
+	return p.ChooseCurrencyHandler(c, math.Round(amount), payload, note, false)
 }
 
 func (p *Payments) ChooseCurrencyHandler(c telebot.Context, amount float64, payload, note string, isBuySub bool) error {
@@ -95,7 +104,7 @@ func (p *Payments) ChooseCurrencyHandler(c telebot.Context, amount float64, payl
 		return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "XTR")
 	})
 	p.bot.Handle(chooseBtns.GetBtn("pay_cryptocurrency"), func(c telebot.Context) error {
-		//return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "USD")
+		//return p.CryptoPaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "USD")
 		return c.Send("Не реализовано")
 	})
 
@@ -103,6 +112,11 @@ func (p *Payments) ChooseCurrencyHandler(c telebot.Context, amount float64, payl
 }
 
 func (p *Payments) PaymentHandler(c telebot.Context, amount float64, description, payload, note, currencyCode string) error {
+	promocodeID, discount, err := p.ph.RequestPromocodeHandler(c)
+	if err != nil {
+		p.log.Error("Failed to request promocode handler", err)
+	}
+
 	btns := getReplyButtons(c)
 	currency, err := p.cs.Get(currencyCode)
 	if err != nil {
@@ -118,6 +132,12 @@ func (p *Payments) PaymentHandler(c telebot.Context, amount float64, description
 		IsCompleted: false,
 	}
 
+	invoiceAmount := amount
+	if discount > 0 {
+		discountAmount := amount * float64(discount) / 100
+		invoiceAmount -= discountAmount
+	}
+
 	err = p.ps.Add(payment)
 	if err != nil {
 		p.log.Error("Failed add payment", err)
@@ -125,13 +145,13 @@ func (p *Payments) PaymentHandler(c telebot.Context, amount float64, description
 	}
 
 	p.bot.Handle(telebot.OnCheckout, func(c telebot.Context) error {
-		return p.PreCheckoutHandler(c, amount)
+		return p.PreCheckoutHandler(c, amount, promocodeID)
 	})
-	invoice := p.ps.CreateInvoice(math.Round(amount*currency.ExchangeRate), "Оплата", description, currency.Code, "", payload)
+	invoice := p.ps.CreateInvoice(math.Round(invoiceAmount*currency.ExchangeRate), "Оплата", description, currency.Code, "", payload)
 	return c.Send(&invoice)
 }
 
-func (p *Payments) PreCheckoutHandler(c telebot.Context, amount float64) error {
+func (p *Payments) PreCheckoutHandler(c telebot.Context, amount float64, promocodeID uint) error {
 	btns := getReplyButtons(c)
 	err := p.ps.UpdateIsCompleted(c.Sender().ID, c.PreCheckoutQuery().Payload, true)
 	if err != nil {
@@ -183,10 +203,23 @@ func (p *Payments) PreCheckoutHandler(c telebot.Context, amount float64) error {
 		}
 	}
 
+	err = p.pcodes.Activations.Add(&models.PromocodeActivations{
+		PromocodeID: promocodeID,
+		UserID:      c.Sender().ID,
+	})
+	if err != nil {
+		p.log.Error("Failed to activate promocode", err)
+	}
+
+	err = p.pcodes.IncrementActivationsByID(promocodeID)
+	if err != nil {
+		p.log.Error("Failed to increment activations promocode", err)
+	}
+
 	return c.Send("✅ Платёж успешно завершен!", btns)
 }
 
-func (p *Payments) HistoryPaymentsHandler(c telebot.Context, currentPage int) error {
+func (p *Payments) HistoryPaymentsHandler(c telebot.Context, currentPage int, isFirst bool) error {
 	const pageSize = 15
 	btns := getReplyButtons(c)
 
@@ -242,21 +275,25 @@ func (p *Payments) HistoryPaymentsHandler(c telebot.Context, currentPage int) er
 		},
 	}, []int{4}, "inline")
 	p.bot.Handle(pgBtns.GetBtn("pagination_first"), func(c telebot.Context) error {
-		return p.HistoryPaymentsHandler(c, 1)
+		return p.HistoryPaymentsHandler(c, 1, false)
 	})
 	p.bot.Handle(pgBtns.GetBtn("pagination_prev"), func(c telebot.Context) error {
-		return p.HistoryPaymentsHandler(c, currentPage-1)
+		return p.HistoryPaymentsHandler(c, currentPage-1, false)
 	})
 	p.bot.Handle(pgBtns.GetBtn("pagination_next"), func(c telebot.Context) error {
-		return p.HistoryPaymentsHandler(c, currentPage+1)
+		return p.HistoryPaymentsHandler(c, currentPage+1, false)
 	})
 	p.bot.Handle(pgBtns.GetBtn("pagination_last"), func(c telebot.Context) error {
-		return p.HistoryPaymentsHandler(c, int(totalPages))
+		return p.HistoryPaymentsHandler(c, int(totalPages), false)
 	})
 
 	btns = &telebot.ReplyMarkup{}
 	if totalPages > 1 {
 		btns = pgBtns.AddBtns()
+	}
+
+	if isFirst {
+		return c.Send(msg, btns)
 	}
 	return c.EditOrSend(msg, btns)
 }

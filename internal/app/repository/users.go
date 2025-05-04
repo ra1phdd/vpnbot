@@ -76,7 +76,6 @@ func (ur *Users) Add(user *models.User) error {
 	if user.PartnerID != 0 {
 		ur.cache.Delete(fmt.Sprintf("user:%d:count_partners", user.PartnerID))
 	}
-
 	ur.log.Debug("Added new user in db", slog.Any("user", user))
 	return nil
 }

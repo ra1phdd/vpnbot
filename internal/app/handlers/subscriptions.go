@@ -161,7 +161,7 @@ func (s *Subscriptions) balancePayment(c telebot.Context, userID int64, sub *mod
 		Amount:      amount,
 		Type:        "expense",
 		Payload:     uuid.New().String(),
-		Note:        fmt.Sprintf("Покупка подписки на %s", subPlan.Name),
+		Note:        "Покупка подписки на " + subPlan.Name,
 		IsCompleted: true,
 	})
 	if err != nil {

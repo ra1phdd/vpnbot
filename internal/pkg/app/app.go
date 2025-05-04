@@ -196,13 +196,13 @@ func (a *App) initMiddlewares() {
 }
 
 func (a *App) initHandlers() {
-	a.usersHandler = handlers.NewUsers(a.log, a.usersService)
+	a.promocodesHandler = handlers.NewPromocodes(a.log, a.bot, a.paymentsService, a.promocodesService, a.usersService)
+	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.promocodesService, a.paymentsService, a.currencyService, a.usersService, a.promocodesHandler)
 	a.keysHandler = handlers.NewKeys(a.log, a.bot, a.keysService, a.serversService, a.subscriptionsService, a.api)
-	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.paymentsService, a.currencyService, a.usersService)
 	a.subscriptionsHandler = handlers.NewSubscriptions(a.log, a.bot, a.subscriptionsService, a.countryService, a.currencyService, a.paymentsService, a.usersService, a.paymentsHandler, a.clientButtonsWithSub)
+	a.usersHandler = handlers.NewUsers(a.log, a.bot, a.usersService, a.subscriptionsHandler, a.paymentsHandler)
 	a.serversHandler = handlers.NewServers(a.log, a.bot, a.serversService, a.keysHandler, a.countryService, a.api)
-	a.baseHandler = handlers.NewBase(a.log, a.bot, a.usersService, a.subscriptionsHandler, a.paymentsHandler)
-	a.promocodesHandler = handlers.NewPromocodes(a.log, a.promocodesService, a.usersService)
+	a.baseHandler = handlers.NewBase(a.log, a.usersService)
 }
 
 func (a *App) run() error {
@@ -210,11 +210,10 @@ func (a *App) run() error {
 
 	a.bot.Handle("/start", a.baseHandler.StartHandler)
 	a.bot.Handle("/help", a.baseHandler.HelpHandler)
-	a.bot.Handle("👔 Профиль", a.baseHandler.ProfileHandler)
 	a.bot.Handle("💡 Информация", a.baseHandler.InfoHandler)
+	a.bot.Handle("👔 Профиль", a.usersHandler.ProfileHandler)
 	a.bot.Handle("🔒 Подключить VPN", a.subscriptionsHandler.ChooseDurationHandler)
 	a.bot.Handle("🌐 Список серверов", a.serversHandler.ListCountriesHandler)
-
 	a.bot.Handle(telebot.OnText, a.baseHandler.OnTextHandler)
 
 	a.bot.Start()

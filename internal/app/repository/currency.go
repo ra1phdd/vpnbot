@@ -99,7 +99,10 @@ func (cr *Currency) Add(currency *models.Currency) (uint, error) {
 		return 0, err
 	}
 
-	cr.cache.Delete("currency:all", "currency:is_base")
+	if currency.IsBase {
+		cr.cache.Delete("currency:is_base")
+	}
+	cr.cache.Delete("currency:all")
 	cr.log.Debug("Added new currency in db", slog.Any("currency", currency))
 	return currency.ID, nil
 }
@@ -135,18 +138,29 @@ func (cr *Currency) Update(code string, newCurrency *models.Currency) error {
 		return err
 	}
 
-	cr.cache.Delete("currency:all", "currency:"+code, "currency:is_base")
+	if currency.IsBase {
+		cr.cache.Delete("currency:is_base")
+	}
+	cr.cache.Delete("currency:all", "currency:"+code)
 	cr.log.Debug("Successfully updated currency", slog.String("code", code), slog.Any("updatedFields", newCurrency))
 	return nil
 }
 
 func (cr *Currency) Delete(code string) error {
+	currency, err := cr.Get(code)
+	if err != nil {
+		return err
+	}
+
 	if err := cr.db.Where("code = ?", code).Delete(&models.Currency{}).Error; err != nil {
 		cr.log.Error("Failed to delete currency", err, slog.String("code", code))
 		return err
 	}
 
-	cr.cache.Delete("currency:all", "currency:"+code, "currency:is_base")
+	if currency.IsBase {
+		cr.cache.Delete("currency:is_base")
+	}
+	cr.cache.Delete("currency:all", "currency:"+code)
 	cr.log.Debug("Deleted currency from db", slog.String("code", code))
 	return nil
 }
