@@ -1,6 +1,9 @@
 package services
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
@@ -81,4 +84,16 @@ func (cs *Country) ProcessButtons(countries []*models.Country) ([]models.ButtonO
 	}
 
 	return listCountries, groups
+}
+
+func (cs *Country) GetHash(countries []*models.Country) (string, error) {
+	hash := sha256.New()
+	enc := json.NewEncoder(hash)
+	enc.SetEscapeHTML(false)
+
+	if err := enc.Encode(countries); err != nil {
+		return "", fmt.Errorf("json encode error: %w", err)
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

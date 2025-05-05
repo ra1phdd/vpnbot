@@ -57,7 +57,7 @@ func (ss *SubscriptionsPlans) Delete(id uint) error {
 	return ss.sr.Plans.Delete(id)
 }
 
-func (ss *SubscriptionsPlans) ProcessButtons(subPlans []*models.SubscriptionPlan, currency *models.Currency) ([]models.ButtonOption, []int) {
+func (ss *SubscriptionsPlans) ProcessButtons(subPlans []*models.SubscriptionPlan) ([]models.ButtonOption, []int) {
 	listSubPlans := make([]models.ButtonOption, 0, len(subPlans))
 
 	for i, plan := range subPlans {
@@ -65,7 +65,7 @@ func (ss *SubscriptionsPlans) ProcessButtons(subPlans []*models.SubscriptionPlan
 			Value: fmt.Sprintf("sub_plan_%d", plan.ID),
 		}
 
-		priceText := fmt.Sprintf("%s (%.0f %s", plan.Name, plan.SubscriptionPrice.Price, currency.Symbol)
+		priceText := fmt.Sprintf("%s (%.0f ₽", plan.Name, plan.SubscriptionPrice.Price)
 
 		if i > 0 {
 			previousPlan := subPlans[0]

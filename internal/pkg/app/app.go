@@ -28,7 +28,6 @@ type App struct {
 	api   *api.API
 
 	countryRepo       *repository.Country
-	currencyRepo      *repository.Currency
 	keysRepo          *repository.Keys
 	paymentsRepo      *repository.Payments
 	promocodesRepo    *repository.Promocodes
@@ -42,7 +41,6 @@ type App struct {
 	baseService          *services.Base
 	checkService         *services.Check
 	countryService       *services.Country
-	currencyService      *services.Currency
 	keysService          *services.Keys
 	paymentsService      *services.Payments
 	promocodesService    *services.Promocodes
@@ -128,7 +126,6 @@ func (a *App) initDB() (err error) {
 		&models.Subscription{},
 		&models.SubscriptionPlan{},
 		&models.SubscriptionPrice{},
-		&models.Currency{},
 		&models.Payment{},
 		&models.Key{},
 		&models.Promocode{},
@@ -169,7 +166,6 @@ func (a *App) initBot() (err error) {
 
 func (a *App) initRepo() {
 	a.countryRepo = repository.NewCountry(a.log, a.db, a.cache)
-	a.currencyRepo = repository.NewCurrency(a.log, a.db, a.cache)
 	a.keysRepo = repository.NewKeys(a.log, a.db, a.cache)
 	a.paymentsRepo = repository.NewPayments(a.log, a.db, a.cache)
 	a.promocodesRepo = repository.NewPromocodes(a.log, a.db, a.cache)
@@ -181,13 +177,12 @@ func (a *App) initRepo() {
 func (a *App) initServices() {
 	a.baseService = services.NewBase(a.log)
 	a.countryService = services.NewCountry(a.log, a.countryRepo)
-	a.currencyService = services.NewCurrency(a.log, a.currencyRepo)
-	a.paymentsService = services.NewPayments(a.log, a.cfg, a.paymentsRepo, a.currencyRepo)
+	a.paymentsService = services.NewPayments(a.log, a.cfg, a.paymentsRepo)
 	a.promocodesService = services.NewPromocodes(a.log, a.promocodesRepo)
 	a.subscriptionsService = services.NewSubscriptions(a.log, a.subscriptionsRepo)
 	a.usersService = services.NewUsers(a.log, a.usersRepo)
 	a.keysService = services.NewKeys(a.log, a.keysRepo)
-	a.serversService = services.NewServers(a.log, a.serversRepo)
+	a.serversService = services.NewServers(a.log, a.serversRepo, a.api)
 	a.checkService = services.NewCheck(a.log, a.bot, a.keysService, a.subscriptionsService, a.serversService, a.usersService, a.api, a.clientButtons)
 }
 
@@ -197,11 +192,11 @@ func (a *App) initMiddlewares() {
 
 func (a *App) initHandlers() {
 	a.promocodesHandler = handlers.NewPromocodes(a.log, a.bot, a.paymentsService, a.promocodesService, a.usersService)
-	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.cfg, a.promocodesService, a.paymentsService, a.currencyService, a.usersService, a.promocodesHandler)
+	a.paymentsHandler = handlers.NewPayments(a.log, a.bot, a.cfg, a.promocodesService, a.paymentsService, a.usersService, a.promocodesHandler)
 	a.keysHandler = handlers.NewKeys(a.log, a.bot, a.keysService, a.serversService, a.subscriptionsService, a.api)
-	a.subscriptionsHandler = handlers.NewSubscriptions(a.log, a.bot, a.subscriptionsService, a.countryService, a.currencyService, a.paymentsService, a.usersService, a.paymentsHandler, a.clientButtonsWithSub)
+	a.subscriptionsHandler = handlers.NewSubscriptions(a.log, a.bot, a.subscriptionsService, a.countryService, a.paymentsService, a.usersService, a.paymentsHandler, a.clientButtonsWithSub)
 	a.usersHandler = handlers.NewUsers(a.log, a.bot, a.usersService, a.subscriptionsHandler, a.paymentsHandler)
-	a.serversHandler = handlers.NewServers(a.log, a.bot, a.serversService, a.keysHandler, a.countryService, a.api)
+	a.serversHandler = handlers.NewServers(a.log, a.bot, a.serversService, a.subscriptionsService, a.keysHandler, a.countryService)
 	a.baseHandler = handlers.NewBase(a.log, a.usersService)
 }
 
@@ -209,24 +204,22 @@ func (a *App) run() error {
 	a.bot.Use(a.usersMiddleware.IsUser)
 
 	a.bot.Handle("/start", a.baseHandler.StartHandler)
-	a.bot.Handle("/help", a.baseHandler.HelpHandler)
 	a.bot.Handle("💬 Техподдержка", func(c telebot.Context) error {
-		menu := &telebot.ReplyMarkup{}
-		menu.Inline(telebot.Row{
-			{
-				Unique: "tech_support",
-				Text:   "Техподдержка",
-				URL:    "https://t.me/nsvpn_support_bot",
-			},
-		})
+		techBtns := services.NewButtons([]models.ButtonOption{
+			{Value: "tech_support", Display: "Техподдержка", URL: "https://t.me/nsvpn_support_bot"},
+		}, []int{1}, "inline")
 
-		return c.Send("💬 Если у вас возникли какие-либо вопросы или проблемы, обратитесь в нашу техподдержку", menu)
+		return c.Send("💬 Если у вас возникли какие-либо вопросы или проблемы, обратитесь в нашу техподдержку", techBtns.AddBtns())
 	})
 	a.bot.Handle("💡 Информация", a.baseHandler.InfoHandler)
 	a.bot.Handle("👔 Профиль", a.usersHandler.ProfileHandler)
 	a.bot.Handle("🔒 Подключить VPN", a.subscriptionsHandler.ChooseDurationHandler)
 	a.bot.Handle("🌐 Список серверов", a.serversHandler.ListCountriesHandler)
 	a.bot.Handle(telebot.OnText, a.baseHandler.OnTextHandler)
+
+	a.paymentsHandler.RegisterRoutes()
+	a.keysHandler.RegisterHandlers()
+	a.serversHandler.RegisterHandlers()
 
 	a.bot.Start()
 	return nil

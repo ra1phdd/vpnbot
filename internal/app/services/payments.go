@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/base64"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"gopkg.in/telebot.v4"
+	"log/slog"
 	"math"
 	"net/http"
 	"nsvpn/internal/app/config"
@@ -22,15 +24,13 @@ type Payments struct {
 	log *logger.Logger
 	cfg *config.Configuration
 	pr  *repository.Payments
-	cr  *repository.Currency
 }
 
-func NewPayments(log *logger.Logger, cfg *config.Configuration, pr *repository.Payments, cr *repository.Currency) *Payments {
+func NewPayments(log *logger.Logger, cfg *config.Configuration, pr *repository.Payments) *Payments {
 	return &Payments{
 		log: log,
 		cfg: cfg,
 		pr:  pr,
-		cr:  cr,
 	}
 }
 
@@ -107,8 +107,8 @@ func (ps *Payments) CreateInvoice(amount float64, title, description, payload st
 	return invoice
 }
 
-func (ps *Payments) CreateBankcardPayment(amount float64, email, description string) models.YoukassaRequest {
-	return models.YoukassaRequest{
+func (ps *Payments) CreateBankcardPayment(amount float64, email, description, payload string) (*models.YoukassaResponse, error) {
+	request := models.YoukassaRequest{
 		Amount: models.YoukassaAmount{
 			Value:    fmt.Sprintf("%.2f", amount),
 			Currency: "RUB",
@@ -139,18 +139,56 @@ func (ps *Payments) CreateBankcardPayment(amount float64, email, description str
 			},
 		},
 	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		ps.log.Error("Error marshaling JSON", err)
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, ps.cfg.YoukassaURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		ps.log.Error("Error creating request", err)
+		return nil, err
+	}
+
+	req.SetBasicAuth(ps.cfg.YoukassaID, ps.cfg.YoukassaAPI)
+	req.Header.Set("Idempotence-Key", payload)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		ps.log.Error("Error making request", err)
+		return nil, err
+	}
+	if resp != nil && resp.Body != nil {
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				ps.log.Debug("Error closing response body", slog.Any("error", closeErr), slog.String("url", req.URL.String()))
+			}
+		}()
+	}
+
+	var response models.YoukassaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		ps.log.Error("Error decoding payment response", err)
+		return nil, err
+	}
+
+	return &response, nil
 }
 
 func (ps *Payments) CheckBankcardPayment(id string) error {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/%s", ps.cfg.YoukassaURL, id), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s", ps.cfg.YoukassaURL, id), nil)
 	if err != nil {
 		ps.log.Error("Error creating request", err)
 		return err
 	}
 	req.SetBasicAuth(ps.cfg.YoukassaID, ps.cfg.YoukassaAPI)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -166,6 +204,13 @@ func (ps *Payments) CheckBankcardPayment(id string) error {
 				ps.log.Error("Error making request", err)
 				continue
 			}
+			if resp != nil && resp.Body != nil {
+				defer func() {
+					if closeErr := resp.Body.Close(); closeErr != nil {
+						ps.log.Debug("Error closing response body", slog.Any("error", closeErr), slog.String("url", req.URL.String()))
+					}
+				}()
+			}
 
 			var response models.YoukassaResponse
 			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
@@ -173,17 +218,18 @@ func (ps *Payments) CheckBankcardPayment(id string) error {
 				return err
 			}
 
-			if response.Status == "succeeded" {
+			switch response.Status {
+			case "succeeded":
 				return nil
-			} else if response.Status == "canceled" {
+			case "canceled":
 				return constants.ErrCancelPayment
 			}
 		}
 	}
 }
 
-func (ps *Payments) CreateCryptoPayment(amount float64, description, payload string) models.HeleketRequest {
-	return models.HeleketRequest{
+func (ps *Payments) CreateCryptoPayment(amount float64, description, payload string) (*models.HeleketResponse, error) {
+	request := models.HeleketRequest{
 		Amount:                 fmt.Sprintf("%.2f", amount),
 		Currency:               "RUB",
 		OrderID:                payload,
@@ -194,6 +240,46 @@ func (ps *Payments) CreateCryptoPayment(amount float64, description, payload str
 		AccuracyPaymentPercent: 2,
 		AdditionalData:         description,
 	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		ps.log.Error("Error marshaling JSON", err)
+		return nil, err
+	}
+
+	b64 := base64.StdEncoding.EncodeToString(jsonData)
+	hash := md5.Sum([]byte(b64 + ps.cfg.HeleketAPI))
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, ps.cfg.HeleketURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		ps.log.Error("Error creating request", err)
+		return nil, err
+	}
+	req.Header.Set("Merchant", ps.cfg.HeleketID)
+	req.Header.Set("Sign", hex.EncodeToString(hash[:]))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		ps.log.Error("Error making request", err)
+		return nil, err
+	}
+	if resp != nil && resp.Body != nil {
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				ps.log.Debug("Error closing response body", slog.Any("error", closeErr), slog.String("url", req.URL.String()))
+			}
+		}()
+	}
+
+	var response models.HeleketResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		ps.log.Error("Error decoding payment response", err)
+		return nil, err
+	}
+
+	return &response, nil
 }
 
 func (ps *Payments) CheckCryptoPayment(uuid, orderID string) error {
@@ -209,17 +295,17 @@ func (ps *Payments) CheckCryptoPayment(uuid, orderID string) error {
 	b64 := base64.StdEncoding.EncodeToString(jsonData)
 	hash := md5.Sum([]byte(b64 + ps.cfg.HeleketAPI))
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/info", ps.cfg.HeleketURL), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ps.cfg.HeleketURL+"/info", nil)
 	if err != nil {
 		ps.log.Error("Error creating request", err)
 		return err
 	}
-	req.Header.Set("merchant", ps.cfg.HeleketID)
-	req.Header.Set("sign", hex.EncodeToString(hash[:]))
+	req.Header.Set("Merchant", ps.cfg.HeleketID)
+	req.Header.Set("Sign", hex.EncodeToString(hash[:]))
 	req.Header.Set("Content-Type", "application/json")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -242,11 +328,22 @@ func (ps *Payments) CheckCryptoPayment(uuid, orderID string) error {
 				return err
 			}
 
-			if response.Result.PaymentStatus == "paid" || response.Result.PaymentStatus == "paid_over" {
+			switch response.Result.PaymentStatus {
+			case "paid", "paid_over":
 				return nil
-			} else if response.Result.PaymentStatus == "cancel" {
+			case "cancel":
 				return constants.ErrCancelPayment
 			}
 		}
 	}
+}
+
+func (ps *Payments) CreatePaymentMessage(amount float64, paymentTime time.Time, method, payload string) string {
+	msg := "🧾 Счет на оплату подписки успешно создан.\n\n"
+	msg += fmt.Sprintf("💸 Стоимость: %.0f руб.\n", amount)
+	msg += fmt.Sprintf("💳 Метод оплаты: %s\n", method)
+	msg += fmt.Sprintf("📦 Номер платежа: %s\n\n", payload)
+	msg += fmt.Sprintf("Вам нужно оплатить счет до %s. При возникновении каких-либо проблем не стесняйтесь обращаться в нашу поддержку", paymentTime.Format("02-01-2006 15:04:05"))
+
+	return msg
 }

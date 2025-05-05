@@ -1,21 +1,15 @@
 package handlers
 
 import (
-	"bytes"
-	"crypto/md5"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"gopkg.in/telebot.v4"
-	"log/slog"
 	"math"
-	"net/http"
 	"nsvpn/internal/app/config"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
+	"nsvpn/internal/app/state"
 	"nsvpn/pkg/logger"
 	"strconv"
 	"time"
@@ -25,36 +19,113 @@ type Payments struct {
 	log    *logger.Logger
 	bot    *telebot.Bot
 	cfg    *config.Configuration
-	cs     *services.Currency
 	pcodes *services.Promocodes
 	ps     *services.Payments
 	us     *services.Users
 	ph     *Promocodes
+
+	chooseBtns    *services.Buttons
+	historyPgBtns *services.Buttons
+
+	PaymentsState   state.Storage[state.PaymentsState]
+	paginationState state.Storage[state.PaginationState]
 }
 
-func NewPayments(log *logger.Logger, bot *telebot.Bot, cfg *config.Configuration, pcodes *services.Promocodes, ps *services.Payments, cs *services.Currency, us *services.Users, ph *Promocodes) *Payments {
+func NewPayments(log *logger.Logger, bot *telebot.Bot, cfg *config.Configuration,
+	pcodes *services.Promocodes, ps *services.Payments, us *services.Users, ph *Promocodes) *Payments {
 	return &Payments{
 		log:    log,
 		bot:    bot,
 		cfg:    cfg,
-		cs:     cs,
 		pcodes: pcodes,
 		ps:     ps,
 		us:     us,
 		ph:     ph,
+
+		chooseBtns: services.NewButtons([]models.ButtonOption{
+			{Value: "pay_bankcard", Display: "💳 Банковская карта/СБП"},
+			{Value: "pay_stars", Display: "⭐ Telegram Stars"},
+			{Value: "pay_cryptocurrency", Display: "💎 Криптовалюта"},
+		}, []int{1, 1, 1}, "inline"),
+		historyPgBtns: services.NewButtons([]models.ButtonOption{
+			{Value: "pagination_first", Display: "⏪"},
+			{Value: "pagination_prev", Display: "◀"},
+			{Value: "pagination_next", Display: "▶"},
+			{Value: "pagination_last", Display: "⏩"},
+		}, []int{4}, "inline"),
+
+		PaymentsState:   state.NewMemoryStorage[state.PaymentsState](),
+		paginationState: state.NewMemoryStorage[state.PaginationState](),
 	}
 }
 
-func (p *Payments) RequestAmount(c telebot.Context, payload, note string) error {
-	btns := getReplyButtons(c)
-	baseCurrency, err := p.cs.GetIsBase()
-	if err != nil {
-		return c.Send(constants.UserError, btns)
+func (p *Payments) RegisterRoutes() {
+	paymentHandlers := map[string]func(c telebot.Context) error{
+		"pay_bankcard":       p.BankcardPaymentHandler,
+		"pay_stars":          p.TelegramPaymentHandler,
+		"pay_cryptocurrency": p.CryptoPaymentHandler,
+	}
+	for value, handler := range paymentHandlers {
+		p.bot.Handle(p.chooseBtns.GetBtn(value), p.CreatePaymentHandler(handler))
 	}
 
-	if err := c.Send(fmt.Sprintf("💳 Введите сумму в %s:", baseCurrency.Code)); err != nil {
+	p.bot.Handle(telebot.OnCheckout, p.TelegramPreCheckoutHandler)
+	p.bot.Handle(telebot.OnPayment, p.SuccessfulPaymentHandler)
+
+	paginationHandlers := map[string]string{
+		"pagination_first": "first",
+		"pagination_prev":  "prev",
+		"pagination_next":  "next",
+		"pagination_last":  "last",
+	}
+	for value, handler := range paginationHandlers {
+		p.bot.Handle(p.historyPgBtns.GetBtn(value), p.PaginationHandler(handler))
+	}
+}
+
+func (p *Payments) CreatePaymentHandler(handler func(c telebot.Context) error) func(c telebot.Context) error {
+	return func(c telebot.Context) error {
+		btns := getReplyButtons(c)
+		err := p.ph.RequestPromocodeHandler(c, p.PaymentsState)
+		if err != nil {
+			p.log.Error("Failed to request promocode handler", err)
+		}
+
+		ps, exists := p.PaymentsState.Get(strconv.FormatInt(c.Sender().ID, 10))
+		if !exists {
+			return c.Send(constants.UserError, btns)
+		}
+
+		payment := &models.Payment{
+			UserID:      c.Sender().ID,
+			Amount:      ps.Amount,
+			Type:        "income",
+			Payload:     ps.Payload,
+			Note:        ps.Note,
+			IsCompleted: false,
+		}
+
+		err = p.ps.Add(payment)
+		if err != nil {
+			p.log.Error("Failed add payment", err)
+			return c.Send(constants.UserError, btns)
+		}
+
+		return handler(c)
+	}
+}
+
+func (p *Payments) RequestAmount(c telebot.Context) error {
+	btns := getReplyButtons(c)
+	if err := c.Send("💳 Введите сумму в RUB:", btns); err != nil {
 		p.log.Error("Failed to send message", err)
+		p.PaymentsState.Delete(strconv.FormatInt(c.Sender().ID, 10))
 		return nil
+	}
+
+	err := c.Respond()
+	if err != nil {
+		p.log.Error("Failed to send message", err)
 	}
 
 	resultChan := make(chan float64)
@@ -75,205 +146,110 @@ func (p *Payments) RequestAmount(c telebot.Context, payload, note string) error 
 
 	select {
 	case amount := <-resultChan:
-		return p.ChooseCurrencyHandler(c, math.Round(amount), payload, note, false)
+		p.PaymentsState.Update(strconv.FormatInt(c.Sender().ID, 10), func(ps state.PaymentsState) state.PaymentsState {
+			ps.Amount = amount
+			return ps
+		})
+
+		return p.ChooseCurrencyHandler(c)
 	case <-time.After(5 * time.Minute):
 		p.bot.Handle(telebot.OnText, func(c telebot.Context) error {
 			return c.Send("🤔 Неизвестная команда. Используйте /help для получения списка команд", btns)
 		})
+
+		p.PaymentsState.Delete(strconv.FormatInt(c.Sender().ID, 10))
 		return c.Send("⌛ Время ввода суммы истекло", btns)
 	}
 }
 
-func (p *Payments) ChooseCurrencyHandler(c telebot.Context, amount float64, payload, note string, isBuySub bool) error {
+func (p *Payments) ChooseCurrencyHandler(c telebot.Context) error {
 	btns := getReplyButtons(c)
-	baseCurrency, err := p.cs.GetIsBase()
-	if err != nil {
-		p.log.Error("Failed to get base currency", err)
+	user := getUser(c, p.us)
+	if user == nil {
+		p.log.Error("Failed to get user", nil)
 		return c.Send(constants.UserError, btns)
 	}
 
-	user, err := p.us.Get(c.Sender().ID)
-	if err != nil {
-		p.log.Error("Failed to get user", err)
+	ps, exists := p.PaymentsState.Get(strconv.FormatInt(c.Sender().ID, 10))
+	if !exists {
 		return c.Send(constants.UserError, btns)
 	}
 
-	chooseBtns := services.NewButtons([]models.ButtonOption{
-		{Value: "pay_bankcard", Display: "💳 Банковская карта/СБП"},
-		{Value: "pay_stars", Display: "⭐ Telegram Stars"},
-		{Value: "pay_cryptocurrency", Display: "💎 Криптовалюта"},
+	var msg string
+	if user.Balance > 0 && ps.IsBuySubscription {
+		ps.Amount -= user.Balance
+		msg = fmt.Sprintf("💰 Ваш текущий баланс: %.f RUB\n", user.Balance)
+	}
+	msg += fmt.Sprintf("💵 Сумма к оплате: %.f RUB\n📦 Номер платежа: %s\n\nВыберите удобный для Вас способ оплаты:", ps.Amount, ps.Payload)
+
+	return c.Send(msg, p.chooseBtns.AddBtns())
+}
+
+func (p *Payments) BankcardPaymentHandler(c telebot.Context) error {
+	defer func(c telebot.Context) {
+		err := c.Respond()
+		if err != nil {
+			p.log.Error("Failed to send message", err)
+		}
+	}(c)
+
+	btns := getReplyButtons(c)
+	ps, exists := p.PaymentsState.Get(strconv.FormatInt(c.Sender().ID, 10))
+	if !exists {
+		return c.Send(constants.UserError, btns)
+	}
+
+	response, err := p.ps.CreateBankcardPayment(ps.Amount, "kneshkreba@mail.ru", ps.Description, ps.Payload)
+	if err != nil {
+		p.log.Error("Failed to create bankcard payment", err)
+		return c.Send(constants.UserError, btns)
+	}
+
+	paymentBtns := services.NewButtons([]models.ButtonOption{
+		{Value: "proceed_payment", Display: "Перейти к оплате", URL: response.Confirmation.ConfirmationURL},
+		{Value: "tech_support", Display: "Техподдержка", URL: "https://t.me/nsvpn_support_bot"},
 	}, []int{1, 1, 1}, "inline")
 
-	p.bot.Handle(chooseBtns.GetBtn("pay_bankcard"), func(c telebot.Context) error {
-		return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "RUB")
-	})
-	p.bot.Handle(chooseBtns.GetBtn("pay_stars"), func(c telebot.Context) error {
-		return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "XTR")
-	})
-	p.bot.Handle(chooseBtns.GetBtn("pay_cryptocurrency"), func(c telebot.Context) error {
-		return p.PaymentHandler(c, amount, "Оплата подписки на NSVPN", payload, note, "BTC")
-	})
-
-	msg := fmt.Sprintf("💵 Сумма к оплате: %.f %s\n📦 Номер платежа: %s\n\nВыберите удобный для Вас способ оплаты:", amount, baseCurrency.Code, payload)
-	if user.Balance > 0 && isBuySub {
-		amount -= user.Balance
-		msg = fmt.Sprintf("💰 Ваш текущий баланс: %.f %s\n💵 Сумма к оплате: %.f %s\n📦 Номер платежа: %s\n\nВыберите удобный для Вас способ оплаты:", user.Balance, baseCurrency.Code, amount, baseCurrency.Code, payload)
-	}
-
-	return c.Send(msg, chooseBtns.AddBtns())
-}
-
-func (p *Payments) PaymentHandler(c telebot.Context, amount float64, description, payload, note, currencyCode string) error {
-	promocodeID, discount, err := p.ph.RequestPromocodeHandler(c)
-	if err != nil {
-		p.log.Error("Failed to request promocode handler", err)
-	}
-
-	btns := getReplyButtons(c)
-	currency, err := p.cs.Get(currencyCode)
-	if err != nil {
-		return err
-	}
-
-	payment := &models.Payment{
-		UserID:      c.Sender().ID,
-		Amount:      amount,
-		Type:        "income",
-		Payload:     payload,
-		Note:        note,
-		IsCompleted: false,
-	}
-
-	invoiceAmount := amount
-	if discount > 0 {
-		discountAmount := amount * float64(discount) / 100
-		invoiceAmount -= discountAmount
-	}
-
-	err = p.ps.Add(payment)
-	if err != nil {
-		p.log.Error("Failed add payment", err)
-		return c.Send(constants.UserError, btns)
-	}
-
-	switch currencyCode {
-	case "XTR":
-		return p.TelegramPaymentHandler(c, invoiceAmount, description, payload, currency, promocodeID)
-	case "RUB":
-		return p.BankcardPaymentHandler(c, invoiceAmount, "kneshkreba@mail.ru", description, payload, promocodeID)
-	case "BTC":
-		return p.CryptoPaymentHandler(c, invoiceAmount, description, payload, promocodeID)
-	default:
-		p.log.Error("Unsupported currency", nil, slog.String("currency", currencyCode))
-		return c.Send(constants.UserError, btns)
-	}
-}
-
-func (p *Payments) BankcardPaymentHandler(c telebot.Context, amount float64, email, description, payload string, promocodeID uint) error {
-	btns := getReplyButtons(c)
-
-	paymentRequest := p.ps.CreateBankcardPayment(amount, email, description)
-	jsonData, err := json.Marshal(paymentRequest)
-	if err != nil {
-		p.log.Error("Error marshaling JSON", err)
-		return c.Send(constants.UserError, btns)
-	}
-
-	req, err := http.NewRequest("POST", p.cfg.YoukassaURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		p.log.Error("Error creating request", err)
-		return c.Send(constants.UserError, btns)
-	}
-
-	req.SetBasicAuth(p.cfg.YoukassaID, p.cfg.YoukassaAPI)
-	req.Header.Set("Idempotence-Key", payload)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		p.log.Error("Error making request", err)
-		return c.Send(constants.UserError, btns)
-	}
-	defer resp.Body.Close()
-
-	var response models.YoukassaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		p.log.Error("Error decoding payment response", err)
-		return c.Send(constants.UserError, btns)
-	}
-
-	menu := &telebot.ReplyMarkup{}
-	row := telebot.Row{
-		{
-			Unique: "proceed_payment",
-			Text:   "Перейти к оплате",
-			URL:    response.Confirmation.ConfirmationURL,
-		},
-	}
-	menu.Inline(row)
-
-	go func() {
-		err := p.ps.CheckBankcardPayment(response.ID)
+	go func(id string) {
+		err := p.ps.CheckBankcardPayment(id)
 		if err != nil {
 			p.log.Error("Error checking payment response", err)
 			return
 		}
 
-		err = p.SuccessfulPaymentHandler(c, amount, payload, promocodeID)
+		err = p.SuccessfulPaymentHandler(c)
 		if err != nil {
 			p.log.Error("Error handling successful payment", err)
 		}
-	}()
+	}(response.ID)
 
-	return c.Send("Пополнение баланса", menu)
+	return c.Send(p.ps.CreatePaymentMessage(ps.Amount, time.Now().Add(10*time.Minute), "Банковская карта/СБП", ps.Payload), paymentBtns.AddBtns())
 }
 
-func (p *Payments) CryptoPaymentHandler(c telebot.Context, amount float64, description, payload string, promocodeID uint) error {
+func (p *Payments) CryptoPaymentHandler(c telebot.Context) error {
+	defer func(c telebot.Context) {
+		err := c.Respond()
+		if err != nil {
+			p.log.Error("Failed to send message", err)
+		}
+	}(c)
+
 	btns := getReplyButtons(c)
+	ps, exists := p.PaymentsState.Get(strconv.FormatInt(c.Sender().ID, 10))
+	if !exists {
+		return c.Send(constants.UserError, btns)
+	}
 
-	paymentRequest := p.ps.CreateCryptoPayment(amount, description, payload)
-	jsonData, err := json.Marshal(paymentRequest)
+	response, err := p.ps.CreateCryptoPayment(ps.Amount, ps.Description, ps.Payload)
 	if err != nil {
-		p.log.Error("Error marshaling JSON", err)
+		p.log.Error("Failed to create crypto payment", err)
 		return c.Send(constants.UserError, btns)
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(jsonData)
-	hash := md5.Sum([]byte(b64 + p.cfg.HeleketAPI))
-
-	req, err := http.NewRequest("POST", p.cfg.HeleketURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		p.log.Error("Error creating request", err)
-		return c.Send(constants.UserError, btns)
-	}
-	req.Header.Set("merchant", p.cfg.HeleketID)
-	req.Header.Set("sign", hex.EncodeToString(hash[:]))
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		p.log.Error("Error making request", err)
-		return c.Send(constants.UserError, btns)
-	}
-	defer resp.Body.Close()
-
-	var response models.HeleketResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		p.log.Error("Error decoding payment response", err)
-		return c.Send(constants.UserError, btns)
-	}
-
-	menu := &telebot.ReplyMarkup{}
-	row := telebot.Row{
-		{
-			Unique: "proceed_payment",
-			Text:   "Перейти к оплате",
-			URL:    response.Result.URL,
-		},
-	}
-	menu.Inline(row)
+	paymentBtns := services.NewButtons([]models.ButtonOption{
+		{Value: "proceed_payment", Display: "Перейти к оплате", URL: response.Result.URL},
+		{Value: "tech_support", Display: "Техподдержка", URL: "https://t.me/nsvpn_support_bot"},
+	}, []int{1, 1, 1}, "inline")
 
 	go func() {
 		err := p.ps.CheckCryptoPayment(response.Result.UUID, response.Result.OrderID)
@@ -282,30 +258,35 @@ func (p *Payments) CryptoPaymentHandler(c telebot.Context, amount float64, descr
 			return
 		}
 
-		err = p.SuccessfulPaymentHandler(c, amount, payload, promocodeID)
+		err = p.SuccessfulPaymentHandler(c)
 		if err != nil {
 			p.log.Error("Error handling successful payment", err)
 		}
 	}()
 
-	return c.Send("Пополнение баланса", menu)
+	return c.Send(p.ps.CreatePaymentMessage(ps.Amount, time.Now().Add(10*time.Minute), "Криптовалюта", ps.Payload), paymentBtns.AddBtns())
 }
 
-func (p *Payments) TelegramPaymentHandler(c telebot.Context, amount float64, description, payload string, currency *models.Currency, promocodeID uint) error {
-	p.bot.Handle(telebot.OnCheckout, func(c telebot.Context) error {
-		return p.TelegramPreCheckoutHandler(c, amount)
-	})
-	p.bot.Handle(telebot.OnPayment, func(c telebot.Context) error {
-		return p.SuccessfulPaymentHandler(c, amount, payload, promocodeID)
-	})
+func (p *Payments) TelegramPaymentHandler(c telebot.Context) error {
+	defer func(c telebot.Context) {
+		err := c.Respond()
+		if err != nil {
+			p.log.Error("Failed to send message", err)
+		}
+	}(c)
 
-	invoice := p.ps.CreateInvoice(math.Round(amount*currency.ExchangeRate), "Оплата", description, payload)
+	btns := getReplyButtons(c)
+	ps, exists := p.PaymentsState.Get(strconv.FormatInt(c.Sender().ID, 10))
+	if !exists {
+		return c.Send(constants.UserError, btns)
+	}
+
+	msg := p.ps.CreatePaymentMessage(ps.Amount, time.Now().Add(10*time.Minute), "Telegram Stars", ps.Payload)
+	invoice := p.ps.CreateInvoice(math.Round(ps.Amount*0.6), "Пополнение баланса", msg, ps.Payload)
 	return c.Send(&invoice)
 }
 
-func (p *Payments) TelegramPreCheckoutHandler(c telebot.Context, amount float64) error {
-	p.log.Info("PreCheckout received", "user", c.Sender().ID, "payload", c.PreCheckoutQuery().Payload, "amount", c.PreCheckoutQuery().Total)
-
+func (p *Payments) TelegramPreCheckoutHandler(c telebot.Context) error {
 	btns := getReplyButtons(c)
 	err := p.bot.Accept(c.PreCheckoutQuery())
 	if err != nil {
@@ -314,6 +295,11 @@ func (p *Payments) TelegramPreCheckoutHandler(c telebot.Context, amount float64)
 		err := p.ps.UpdateIsCompleted(c.Sender().ID, c.PreCheckoutQuery().Payload, false)
 		if err != nil {
 			p.log.Error("Failed update isCompleted", err)
+		}
+
+		amount := float64(c.PreCheckoutQuery().Total) / 0.6
+		if ps, exists := p.PaymentsState.Get(strconv.FormatInt(c.Sender().ID, 10)); exists {
+			amount = ps.Amount
 		}
 
 		err = p.us.DecrementBalance(c.Sender().ID, amount)
@@ -328,27 +314,30 @@ func (p *Payments) TelegramPreCheckoutHandler(c telebot.Context, amount float64)
 	return nil
 }
 
-func (p *Payments) SuccessfulPaymentHandler(c telebot.Context, amount float64, payload string, promocodeID uint) error {
+func (p *Payments) SuccessfulPaymentHandler(c telebot.Context) error {
 	btns := getReplyButtons(c)
-	err := p.ps.UpdateIsCompleted(c.Sender().ID, payload, true)
-	if err != nil {
-		p.log.Error("Failed update isCompleted", err)
+	ps, exists := p.PaymentsState.Get(strconv.FormatInt(c.Sender().ID, 10))
+	if !exists {
 		return c.Send(constants.UserError, btns)
 	}
 
-	err = p.us.IncrementBalance(c.Sender().ID, amount)
+	err := p.ps.UpdateIsCompleted(c.Sender().ID, ps.Payload, true)
 	if err != nil {
 		p.log.Error("Failed update isCompleted", err)
-		return c.Send(constants.UserError, btns)
+	}
+
+	err = p.us.IncrementBalance(c.Sender().ID, ps.Amount)
+	if err != nil {
+		p.log.Error("Failed update isCompleted", err)
 	}
 
 	user, err := p.us.Get(c.Sender().ID)
 	if err != nil {
 		p.log.Error("Failed update isCompleted", err)
-	} else if user.PartnerID != 0 && amount*0.15 >= 1 {
+	} else if user.PartnerID != 0 && ps.Amount*0.15 >= 1 {
 		err = p.ps.Add(&models.Payment{
 			UserID:      user.PartnerID,
-			Amount:      amount * 0.15,
+			Amount:      ps.Amount * 0.15,
 			Type:        "income",
 			Payload:     uuid.New().String(),
 			Note:        "15% от пополнения баланса рефералом",
@@ -358,32 +347,66 @@ func (p *Payments) SuccessfulPaymentHandler(c telebot.Context, amount float64, p
 			p.log.Error("Failed add payment", err)
 		}
 
-		err = p.us.IncrementBalance(user.PartnerID, math.Round(amount*0.15))
+		err = p.us.IncrementBalance(user.PartnerID, math.Round(ps.Amount*0.15))
 		if err != nil {
 			p.log.Error("Failed increment balance", err)
 		}
 	}
 
-	if promocodeID != 0 {
+	if ps.Promocode.ID != 0 {
 		err = p.pcodes.Activations.Add(&models.PromocodeActivations{
-			PromocodeID: promocodeID,
+			PromocodeID: ps.Promocode.ID,
 			UserID:      c.Sender().ID,
 		})
 		if err != nil {
 			p.log.Error("Failed to activate promocode", err)
 		}
 
-		err = p.pcodes.IncrementActivationsByID(promocodeID)
+		err = p.pcodes.IncrementActivationsByID(ps.Promocode.ID)
 		if err != nil {
 			p.log.Error("Failed to increment activations promocode", err)
 		}
 	}
 
+	p.PaymentsState.Delete(strconv.FormatInt(c.Sender().ID, 10))
 	return c.Send("✅ Платёж успешно завершен!", btns)
 }
 
+func (p *Payments) PaginationHandler(action string) func(c telebot.Context) error {
+	return func(c telebot.Context) error {
+		st, exists := p.paginationState.Get(strconv.FormatInt(c.Sender().ID, 10))
+		if !exists {
+			st = state.PaginationState{
+				CurrentPage: 1,
+				TotalPages:  1,
+			}
+		}
+
+		newPage := st.CurrentPage
+		switch action {
+		case "first":
+			newPage = 1
+		case "prev":
+			newPage = max(1, st.CurrentPage-1)
+		case "next":
+			newPage = min(st.TotalPages, st.CurrentPage+1)
+		case "last":
+			newPage = st.TotalPages
+		}
+
+		return p.HistoryPaymentsHandler(c, newPage, false)
+	}
+}
+
 func (p *Payments) HistoryPaymentsHandler(c telebot.Context, currentPage int, isFirst bool) error {
-	const pageSize = 15
+	defer func(c telebot.Context) {
+		err := c.Respond()
+		if err != nil {
+			p.log.Error("Failed to send message", err)
+		}
+	}(c)
+
+	const pageSize = 10
 	btns := getReplyButtons(c)
 
 	totalCount, err := p.ps.GetPaymentsCount(c.Sender().ID)
@@ -399,6 +422,11 @@ func (p *Payments) HistoryPaymentsHandler(c telebot.Context, currentPage int, is
 		totalPages++
 	}
 
+	p.paginationState.Set(strconv.FormatInt(c.Sender().ID, 10), state.PaginationState{
+		CurrentPage: currentPage,
+		TotalPages:  int(totalPages),
+	})
+
 	if currentPage < 1 || currentPage > int(totalPages) {
 		return nil
 	}
@@ -409,50 +437,19 @@ func (p *Payments) HistoryPaymentsHandler(c telebot.Context, currentPage int, is
 		return c.Send(constants.UserError, btns)
 	}
 
-	baseCurrency, err := p.cs.GetIsBase()
-	if err != nil {
-		return c.Send(constants.UserError, btns)
-	}
-
 	msg := fmt.Sprintf("🧾 История платежей (страница %d из %d):\n", currentPage, totalPages)
 	for i, payment := range payments {
-		msg += fmt.Sprintf("%d) %s - %s - %.f %s\n", i+1+offset, payment.Date.Format("2006-01-02 15:04:05"), payment.Note, payment.Amount, baseCurrency.Code)
-	}
+		amount := fmt.Sprintf("+%.f", payment.Amount)
+		if payment.Type == "expense" {
+			amount = fmt.Sprintf("-%.f", payment.Amount)
+		}
 
-	pgBtns := services.NewButtons([]models.ButtonOption{
-		{
-			Value:   "pagination_first",
-			Display: "⏪",
-		},
-		{
-			Value:   "pagination_prev",
-			Display: "◀",
-		},
-		{
-			Value:   "pagination_next",
-			Display: "▶",
-		},
-		{
-			Value:   "pagination_last",
-			Display: "⏩",
-		},
-	}, []int{4}, "inline")
-	p.bot.Handle(pgBtns.GetBtn("pagination_first"), func(c telebot.Context) error {
-		return p.HistoryPaymentsHandler(c, 1, false)
-	})
-	p.bot.Handle(pgBtns.GetBtn("pagination_prev"), func(c telebot.Context) error {
-		return p.HistoryPaymentsHandler(c, currentPage-1, false)
-	})
-	p.bot.Handle(pgBtns.GetBtn("pagination_next"), func(c telebot.Context) error {
-		return p.HistoryPaymentsHandler(c, currentPage+1, false)
-	})
-	p.bot.Handle(pgBtns.GetBtn("pagination_last"), func(c telebot.Context) error {
-		return p.HistoryPaymentsHandler(c, int(totalPages), false)
-	})
+		msg += fmt.Sprintf("%d) %s RUB - %s - %s\n", i+1+offset, amount, payment.Date.Format("2006-01-02 15:04:05"), payment.Note)
+	}
 
 	btns = &telebot.ReplyMarkup{}
 	if totalPages > 1 {
-		btns = pgBtns.AddBtns()
+		btns = p.historyPgBtns.AddBtns()
 	}
 
 	if isFirst {

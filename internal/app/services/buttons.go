@@ -34,6 +34,7 @@ func NewButtons(buttons []models.ButtonOption, layout []int, typeKeyboard string
 
 func createButtonRows(menu *telebot.ReplyMarkup, buttons []models.ButtonOption, layout []int, typeKeyboard string) ([]telebot.Row, map[string]*telebot.Btn) {
 	btns := make(map[string]*telebot.Btn, len(buttons))
+
 	switch typeKeyboard {
 	case KeyboardTypeReply:
 		for _, item := range buttons {
@@ -42,7 +43,12 @@ func createButtonRows(menu *telebot.ReplyMarkup, buttons []models.ButtonOption, 
 		}
 	case KeyboardTypeInline:
 		for _, item := range buttons {
-			btn := menu.Data(item.Display, item.Value)
+			var btn telebot.Btn
+			if item.URL != "" {
+				btn = menu.URL(item.Display, item.URL)
+			} else {
+				btn = menu.Data(item.Display, item.Value)
+			}
 			btns[item.Value] = &btn
 		}
 	}

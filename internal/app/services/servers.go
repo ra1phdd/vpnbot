@@ -2,22 +2,27 @@ package services
 
 import (
 	"fmt"
+	"go.uber.org/atomic"
+	"nsvpn/internal/app/api"
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/repository"
 	"nsvpn/pkg/logger"
 	"strings"
+	"sync"
 )
 
 type Servers struct {
 	log *logger.Logger
 	sr  *repository.Servers
+	api *api.API
 }
 
-func NewServers(log *logger.Logger, sr *repository.Servers) *Servers {
+func NewServers(log *logger.Logger, sr *repository.Servers, api *api.API) *Servers {
 	return &Servers{
 		log: log,
 		sr:  sr,
+		api: api,
 	}
 }
 
@@ -88,4 +93,59 @@ func (ss *Servers) ProcessButtons(servers []models.Server) ([]models.ButtonOptio
 	}
 
 	return listServers, groups
+}
+
+type LoadInfo struct {
+	TotalLoad  float64
+	Inactive   int64
+	TotalCount int
+}
+
+func (ss *Servers) CalculateServerLoad(servers []*models.Server) LoadInfo {
+	var (
+		wg       sync.WaitGroup
+		sumLoad  atomic.Float64
+		inActive atomic.Int64
+	)
+
+	for _, serv := range servers {
+		wg.Add(1)
+		go func(server *models.Server) {
+			defer wg.Done()
+			if load, err := ss.api.GetLoadRequest(server); err != nil {
+				inActive.Add(1)
+			} else {
+				sumLoad.Add(load)
+			}
+		}(serv)
+	}
+	wg.Wait()
+
+	return LoadInfo{
+		TotalLoad:  sumLoad.Load(),
+		Inactive:   inActive.Load(),
+		TotalCount: len(servers),
+	}
+}
+
+func (ss *Servers) BuildMessage(country *models.Country, info LoadInfo) string {
+	loadMsg := "критическая 🔴"
+	avgLoad := info.TotalLoad / (float64(info.TotalCount) - float64(info.Inactive))
+
+	switch {
+	case avgLoad <= 0.3:
+		loadMsg = "низкая 🟢"
+	case avgLoad <= 0.7:
+		loadMsg = "средняя 🌕"
+	case avgLoad <= 0.95:
+		loadMsg = "высокая 🟠"
+	case int64(info.TotalCount) == info.Inactive:
+		loadMsg = "не отвечает 🔴"
+	}
+
+	return fmt.Sprintf("%s %s\n🎛 Нагрузка на сервер: %s\n\n",
+		country.Emoji,
+		country.Code,
+		loadMsg,
+	)
 }

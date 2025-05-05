@@ -7,7 +7,9 @@ import (
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
+	"nsvpn/internal/app/state"
 	"nsvpn/pkg/logger"
+	"strconv"
 	"time"
 )
 
@@ -61,14 +63,18 @@ func (u *Users) ProfileHandler(c telebot.Context) error {
 
 	balanceBtns := services.NewButtons(btnOpts, layout, "inline")
 	u.bot.Handle(balanceBtns.GetBtn("top_balance"), func(c telebot.Context) error {
-		return u.ph.RequestAmount(c, uuid.New().String(), "Пополнение баланса")
+		u.ph.PaymentsState.Set(strconv.FormatInt(c.Sender().ID, 10), state.PaymentsState{
+			Payload:     uuid.New().String(),
+			Description: "Пополнение баланса",
+			Note:        "Пополнение баланса",
+		})
+
+		return u.ph.RequestAmount(c)
 	})
 	if subOk && sub != nil && sub.EndDate.After(time.Now().UTC()) && sub.IsActive {
 		u.bot.Handle(balanceBtns.GetBtn("extend_sub"), u.ss.ChooseDurationHandler)
 	}
-	u.bot.Handle(balanceBtns.GetBtn("history_payments"), func(c telebot.Context) error {
-		return u.ph.HistoryPaymentsHandler(c, 1, true)
-	})
+	u.bot.Handle(balanceBtns.GetBtn("history_payments"), u.ph.PaginationHandler("first"))
 
 	partners, err := u.us.CountPartners(c.Sender().ID)
 	if err != nil {

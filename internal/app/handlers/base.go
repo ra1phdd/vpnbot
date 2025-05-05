@@ -38,11 +38,6 @@ func (b *Base) AcceptOfferHandler(c telebot.Context) error {
 	return c.Send(fmt.Sprintf("👋 Добро пожаловать, %s!", c.Sender().FirstName), btns)
 }
 
-func (b *Base) HelpHandler(c telebot.Context) error {
-	btns := getReplyButtons(c)
-	return c.Send("🚀 Базовые команды\n/help - Посмотреть справку о командах\n", btns)
-}
-
 func (b *Base) OnTextHandler(c telebot.Context) error {
 	btns := getReplyButtons(c)
 	return c.Send("🤔 Неизвестная команда. Используйте /help для получения списка команд", btns)

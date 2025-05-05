@@ -3,6 +3,7 @@ package models
 type ButtonOption struct {
 	Value   string
 	Display string
+	URL     string
 }
 
 var AcceptOfferButton = []ButtonOption{

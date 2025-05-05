@@ -9,7 +9,9 @@ import (
 	"nsvpn/internal/app/constants"
 	"nsvpn/internal/app/models"
 	"nsvpn/internal/app/services"
+	"nsvpn/internal/app/state"
 	"nsvpn/pkg/logger"
+	"strconv"
 	"time"
 )
 
@@ -18,20 +20,19 @@ type Subscriptions struct {
 	bot                  *telebot.Bot
 	ss                   *services.Subscriptions
 	cs                   *services.Country
-	curs                 *services.Currency
 	ps                   *services.Payments
 	us                   *services.Users
 	ph                   *Payments
 	clientButtonsWithSub *services.Buttons
 }
 
-func NewSubscriptions(log *logger.Logger, bot *telebot.Bot, ss *services.Subscriptions, cs *services.Country, curs *services.Currency, ps *services.Payments, us *services.Users, ph *Payments, clientButtonsWithSub *services.Buttons) *Subscriptions {
+func NewSubscriptions(log *logger.Logger, bot *telebot.Bot, ss *services.Subscriptions,
+	cs *services.Country, ps *services.Payments, us *services.Users, ph *Payments, clientButtonsWithSub *services.Buttons) *Subscriptions {
 	return &Subscriptions{
 		log:                  log,
 		bot:                  bot,
 		ss:                   ss,
 		cs:                   cs,
-		curs:                 curs,
 		ps:                   ps,
 		us:                   us,
 		ph:                   ph,
@@ -40,6 +41,12 @@ func NewSubscriptions(log *logger.Logger, bot *telebot.Bot, ss *services.Subscri
 }
 
 func (s *Subscriptions) ChooseDurationHandler(c telebot.Context) error {
+	defer func(c telebot.Context) {
+		if err := c.Respond(); err != nil {
+			s.log.Error("Failed to send message", err)
+		}
+	}(c)
+
 	btns := getReplyButtons(c)
 	plans, err := s.ss.Plans.GetAll()
 	if err != nil {
@@ -51,12 +58,7 @@ func (s *Subscriptions) ChooseDurationHandler(c telebot.Context) error {
 		return c.Send(constants.UserError, btns)
 	}
 
-	currency, err := s.curs.GetIsBase()
-	if err != nil {
-		return c.Send(constants.UserError, btns)
-	}
-
-	buttons, layout := s.ss.Plans.ProcessButtons(plans, currency)
+	buttons, layout := s.ss.Plans.ProcessButtons(plans)
 	subBtns := services.NewButtons(buttons, layout, "inline")
 
 	for _, btn := range subBtns.GetBtns() {
@@ -96,6 +98,10 @@ func (s *Subscriptions) AddSubHandler(c telebot.Context, subPlan *models.Subscri
 	if err != nil {
 		s.log.Error("Subscription error", err)
 		return c.Send(constants.UserError, btns)
+	}
+
+	if err := c.Respond(); err != nil {
+		s.log.Error("Failed to send message", err)
 	}
 
 	amount := subPlan.SubscriptionPrice.Price
@@ -185,7 +191,13 @@ func (s *Subscriptions) handleExternalPayment(c telebot.Context, userID int64, s
 		return err
 	}
 
-	if err := s.ph.ChooseCurrencyHandler(c, amount, paymentID.String(), "Пополнение баланса", true); err != nil {
+	s.ph.PaymentsState.Set(strconv.FormatInt(c.Sender().ID, 10), state.PaymentsState{
+		Amount:            amount,
+		Payload:           paymentID.String(),
+		Note:              "Покупка подписки на " + subPlan.Name,
+		IsBuySubscription: true,
+	})
+	if err := s.ph.ChooseCurrencyHandler(c); err != nil {
 		return fmt.Errorf("payment init failed: %w", err)
 	}
 
